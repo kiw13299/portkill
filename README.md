@@ -39,14 +39,24 @@ make install
 
 ### Basic Commands
 
+Kill processes on a port (default):
+```bash
+portkill 3000
+```
+
+Kill processes on multiple ports:
+```bash
+portkill 3000 8080 9000
+```
+
+Kill processes on a port range:
+```bash
+portkill 3000-3005
+```
+
 List processes on a port:
 ```bash
 portkill list 3000
-```
-
-Kill process on a port:
-```bash
-portkill kill 3000
 ```
 
 Monitor ports in real-time:
@@ -68,20 +78,25 @@ portkill scan
 
 Dry-run mode (preview actions):
 ```bash
-portkill --dry-run kill 3000
+portkill --dry-run 3000
 ```
 
 Force termination:
 ```bash
-portkill --force kill 3000
+portkill --force 3000
+```
+
+Interactive confirmation:
+```bash
+portkill --interactive 8080
 ```
 
 ### Command Reference
 
 | Command | Description | Example |
 |---------|-------------|---------|
+| *default* | Kill processes on port(s) | `portkill 3000` |
 | `list` | Show processes on port(s) | `portkill list 3000` |
-| `kill` | Terminate processes | `portkill kill 8080` |
 | `scan` | Display all listening ports | `portkill scan` |
 | `monitor` | Real-time port monitoring | `portkill monitor 3000 8080` |
 | `menu` | Launch interactive interface | `portkill menu` |

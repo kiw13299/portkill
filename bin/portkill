@@ -169,6 +169,47 @@ validate_port() {
     return 0
 }
 
+# Parse port ranges (e.g., "3000-3005" -> "3000 3001 3002 3003 3004 3005")
+parse_port_range() {
+    local input="$1"
+    local expanded_ports=()
+    
+    if [[ "$input" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+        local start_port="${BASH_REMATCH[1]}"
+        local end_port="${BASH_REMATCH[2]}"
+        
+        if ! validate_port "$start_port" 2>/dev/null || ! validate_port "$end_port" 2>/dev/null; then
+            print_colored "$RED" "[!]" "Invalid port range: $input"
+            return 1
+        fi
+        
+        if [ "$start_port" -gt "$end_port" ]; then
+            print_colored "$RED" "[!]" "Invalid range: start port ($start_port) > end port ($end_port)"
+            return 1
+        fi
+        
+        if [ $((end_port - start_port)) -gt 100 ]; then
+            print_colored "$RED" "[!]" "Port range too large (max 100 ports): $input"
+            return 1
+        fi
+        
+        for ((port=start_port; port<=end_port; port++)); do
+            expanded_ports+=("$port")
+        done
+        
+        echo "${expanded_ports[@]}"
+        return 0
+    else
+        # Not a range, just validate single port
+        if validate_port "$input" 2>/dev/null; then
+            echo "$input"
+            return 0
+        else
+            return 1
+        fi
+    fi
+}
+
 # Get service name for common ports
 get_service_name() {
     local port="$1"
@@ -671,6 +712,7 @@ show_help() {
     echo "Advanced Port Management & Network Analysis"
     echo
     echo "USAGE:"
+    echo "  $0 [OPTIONS] [PORTS...]        Kill processes on ports (default)"
     echo "  $0 [OPTIONS] [COMMAND] [PORTS...]"
     echo
     echo "COMMANDS:"
@@ -692,9 +734,12 @@ show_help() {
     echo "  --help                Show this help message"
     echo
     echo "EXAMPLES:"
+    echo "  $0 3000                       # Kill processes on port 3000"
+    echo "  $0 3000 8080 9000             # Kill processes on multiple ports"
+    echo "  $0 3000-3005                  # Kill processes on port range 3000-3005"
+    echo "  $0 -f 3000                    # Force kill processes on port 3000"
+    echo "  $0 -i 8080                    # Interactive kill for port 8080"
     echo "  $0 list 3000                  # List processes on port 3000"
-    echo "  $0 kill -i 8080               # Kill processes on port 8080 (interactive)"
-    echo "  $0 kill --force 3000 8080     # Force kill processes on multiple ports"
     echo "  $0 monitor 3000 8080          # Monitor ports in real-time"
     echo "  $0 scan --security            # Security scan"
     echo "  $0 menu                       # Interactive menu mode"
@@ -777,8 +822,10 @@ main() {
                 exit 1
                 ;;
             *)
-                if validate_port "$1" 2>/dev/null; then
-                    ports+=("$1")
+                # Try to parse as port or port range
+                if parsed_ports=$(parse_port_range "$1" 2>/dev/null); then
+                    read -ra range_ports <<< "$parsed_ports"
+                    ports+=("${range_ports[@]}")
                 else
                     command="$1"
                 fi
@@ -788,10 +835,11 @@ main() {
     done
     
     while [[ $# -gt 0 ]]; do
-        if validate_port "$1"; then
-            ports+=("$1")
+        if parsed_ports=$(parse_port_range "$1"); then
+            read -ra range_ports <<< "$parsed_ports"
+            ports+=("${range_ports[@]}")
         else
-            print_colored "$RED" "[!]" "Invalid port: $1"
+            print_colored "$RED" "[!]" "Invalid port or range: $1"
             exit 1
         fi
         shift
@@ -841,14 +889,11 @@ main() {
             ;;
         "")
             if [[ ${#ports[@]} -gt 0 ]]; then
-                if [[ "$DRY_RUN_MODE" == "true" ]]; then
-                    for port in "${ports[@]}"; do
-                        kill_processes "$port" "${FORCE_MODE:-false}" "true" "${INTERACTIVE_MODE:-false}"
-                    done
+                # Default behavior: kill processes on specified ports
+                if [[ ${#ports[@]} -gt 1 ]]; then
+                    bulk_kill_ports "${ports[@]}"
                 else
-                    for port in "${ports[@]}"; do
-                        list_processes "$port" "${DETAILED_MODE:-false}"
-                    done
+                    kill_processes "${ports[0]}" "${FORCE_MODE:-false}" "${DRY_RUN_MODE:-false}" "${INTERACTIVE_MODE:-false}"
                 fi
             else
                 INTERACTIVE_MODE=true
