@@ -1,0 +1,37 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Log files
+*.log
+
+# Test artifacts
+test/*.tmp
+test/coverage/
+
+# Build artifacts
+dist/
+build/
+*.tar.gz
+*.zip
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+
+# Configuration (local only)
+.portkill/
+config.local
+
+# Documentation build
+docs/_build/
+docs/.doctrees/

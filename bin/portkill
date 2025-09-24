@@ -1,0 +1,911 @@
+#!/bin/bash
+
+# PortKill - Advanced Port Management Tool
+# Copyright (c) 2025 Abraham Esandayinze Tanta
+# Licensed under MIT License
+
+set -e
+
+# Script metadata
+readonly SCRIPT_NAME="PortKill"
+readonly VERSION="2.0.0"
+readonly AUTHOR="Abraham Esandayinze Tanta"
+readonly CONFIG_DIR="$HOME/.portkill"
+readonly LOG_FILE="$CONFIG_DIR/portkill.log"
+readonly HISTORY_FILE="$CONFIG_DIR/history.log"
+readonly WHITELIST_FILE="$CONFIG_DIR/whitelist.conf"
+readonly CONFIG_FILE="$CONFIG_DIR/config.conf"
+
+# Color definitions for output
+readonly RED='\033[0;31m'
+readonly GREEN='\033[0;32m'
+readonly YELLOW='\033[1;33m'
+readonly BLUE='\033[0;34m'
+readonly CYAN='\033[0;36m'
+readonly MAGENTA='\033[0;35m'
+readonly WHITE='\033[1;37m'
+readonly GRAY='\033[0;90m'
+readonly NC='\033[0m'
+readonly BOLD='\033[1m'
+readonly DIM='\033[2m'
+
+# Global variables
+INTERACTIVE_MODE=false
+VERBOSE_MODE=false
+SAFE_MODE=true
+AUTO_CONFIRM=false
+SHOW_HEADERS=true
+MONITORING_INTERVAL=2
+LAST_SCAN_TIME=0
+
+# Protected system processes
+declare -a PROTECTED_PROCESSES=("launchd" "kernel_task" "systemstats" "sshd" "WindowServer" "loginwindow")
+
+# Initialize configuration
+init_config() {
+    mkdir -p "$CONFIG_DIR"
+    
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        cat > "$CONFIG_FILE" << EOF
+# PortKill Configuration
+safe_mode=true
+auto_confirm=false
+verbose_mode=false
+monitoring_interval=2
+max_history_entries=1000
+enable_notifications=true
+color_output=true
+show_process_tree=true
+EOF
+    fi
+    
+    if [[ ! -f "$WHITELIST_FILE" ]]; then
+        cat > "$WHITELIST_FILE" << EOF
+# Protected processes (one per line)
+launchd
+kernel_task
+systemstats
+sshd
+WindowServer
+loginwindow
+Finder
+Dock
+SystemUIServer
+EOF
+    fi
+    
+    source "$CONFIG_FILE" 2>/dev/null || true
+    
+    while IFS= read -r line; do
+        [[ "$line" =~ ^#.*$ ]] || [[ -z "$line" ]] && continue
+        PROTECTED_PROCESSES+=("$line")
+    done < "$WHITELIST_FILE" 2>/dev/null || true
+}
+
+# Logging functions
+log_message() {
+    local level="$1"
+    local message="$2"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+    
+    if [[ "$VERBOSE_MODE" == "true" ]]; then
+        case "$level" in
+            "ERROR") echo -e "${RED}[$level]${NC} $message" >&2 ;;
+            "WARN")  echo -e "${YELLOW}[$level]${NC} $message" >&2 ;;
+            "INFO")  echo -e "${CYAN}[$level]${NC} $message" >&2 ;;
+            *) echo "[$level] $message" >&2 ;;
+        esac
+    fi
+}
+
+add_to_history() {
+    local action="$1"
+    local details="$2"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "$timestamp|$action|$details" >> "$HISTORY_FILE"
+    
+    if [[ -f "$HISTORY_FILE" ]]; then
+        tail -n 1000 "$HISTORY_FILE" > "$HISTORY_FILE.tmp" && mv "$HISTORY_FILE.tmp" "$HISTORY_FILE"
+    fi
+}
+
+# Output functions
+print_colored() {
+    local color="$1"
+    local icon="$2"
+    local message="$3"
+    local newline="${4:-true}"
+    
+    if [[ "$newline" == "true" ]]; then
+        echo -e "${color}${icon} ${message}${NC}"
+    else
+        echo -ne "${color}${icon} ${message}${NC}"
+    fi
+}
+
+show_progress_bar() {
+    local current="$1"
+    local total="$2"
+    local width=50
+    local percentage=$((current * 100 / total))
+    local filled=$((current * width / total))
+    local empty=$((width - filled))
+    
+    printf "\r${BLUE}["
+    printf "%*s" $filled | tr ' ' '='
+    printf "%*s" $empty | tr ' ' '-'
+    printf "] %d%% (%d/%d)${NC}" $percentage $current $total
+}
+
+# Header display
+show_header() {
+    if [[ "$SHOW_HEADERS" != "true" ]]; then return; fi
+    
+    clear
+    echo -e "${CYAN}=================================================================================${NC}"
+    echo -e "${CYAN}                              PortKill v${VERSION}                              ${NC}"
+    echo -e "${CYAN}                     Advanced Port Management & Analysis                        ${NC}"
+    echo -e "${CYAN}=================================================================================${NC}"
+    echo
+}
+
+show_section_header() {
+    local title="$1"
+    echo
+    echo -e "${BLUE}--- $title ---${NC}"
+    echo
+}
+
+# Port validation
+validate_port() {
+    local port="$1"
+    
+    if [[ ! "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        print_colored "$RED" "[!]" "Invalid port number '$port' (must be 1-65535)"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Get service name for common ports
+get_service_name() {
+    local port="$1"
+    
+    case "$port" in
+        22) echo "SSH" ;;
+        25) echo "SMTP" ;;
+        53) echo "DNS" ;;
+        80) echo "HTTP" ;;
+        110) echo "POP3" ;;
+        143) echo "IMAP" ;;
+        443) echo "HTTPS" ;;
+        3000) echo "Dev Server" ;;
+        3306) echo "MySQL" ;;
+        5432) echo "PostgreSQL" ;;
+        6379) echo "Redis" ;;
+        8000|8080|8081) echo "HTTP Alt" ;;
+        27017) echo "MongoDB" ;;
+        *) echo "" ;;
+    esac
+}
+
+# Find processes on port
+find_processes_on_port() {
+    local port="$1"
+    local pids=""
+    
+    # Try lsof first (most reliable)
+    if command -v lsof &> /dev/null; then
+        pids=$(lsof -ti ":$port" 2>/dev/null || true)
+    fi
+    
+    # Fallback to netstat
+    if [[ -z "$pids" ]] && command -v netstat &> /dev/null; then
+        pids=$(netstat -anv | grep ":$port " | awk '{print $9}' | cut -d'.' -f1 2>/dev/null || true)
+    fi
+    
+    # Fallback to fuser
+    if [[ -z "$pids" ]] && command -v fuser &> /dev/null; then
+        pids=$(fuser "$port/tcp" 2>/dev/null | tr -s ' ' | cut -d' ' -f2- || true)
+    fi
+    
+    if [[ -z "$pids" ]]; then
+        return 1
+    fi
+    
+    echo "$pids"
+    return 0
+}
+
+# Get process information
+get_process_info() {
+    local pid="$1"
+    local detailed="${2:-false}"
+    
+    if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+        echo "Invalid PID"
+        return 1
+    fi
+    
+    if ! ps -p "$pid" > /dev/null 2>&1; then
+        echo "Process not found"
+        return 1
+    fi
+    
+    if [[ "$detailed" == "true" ]]; then
+        ps -p "$pid" -o pid=,ppid=,user=,pcpu=,pmem=,vsz=,rss=,tty=,stat=,start=,time=,comm= 2>/dev/null || echo "Error getting process info"
+    else
+        ps -p "$pid" -o user=,comm= 2>/dev/null || echo "unknown unknown"
+    fi
+}
+
+# Get process command line
+get_process_cmdline() {
+    local pid="$1"
+    
+    if [[ -r "/proc/$pid/cmdline" ]]; then
+        tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null
+    else
+        ps -p "$pid" -o args= 2>/dev/null || echo "N/A"
+    fi
+}
+
+# Check if process is protected
+is_protected_process() {
+    local process_name="$1"
+    
+    for protected in "${PROTECTED_PROCESSES[@]}"; do
+        if [[ "$process_name" == "$protected" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# List processes on port
+list_processes() {
+    local port="$1"
+    local detailed="${2:-false}"
+    local pids
+    
+    if ! pids=$(find_processes_on_port "$port"); then
+        print_colored "$YELLOW" "[i]" "No processes found on port $port"
+        return 0
+    fi
+    
+    local service_name=$(get_service_name "$port")
+    if [[ -n "$service_name" ]]; then
+        print_colored "$BLUE" "[+]" "Port $port ($service_name) - Active Processes:"
+    else
+        print_colored "$BLUE" "[+]" "Port $port - Active Processes:"
+    fi
+    echo
+    
+    local count=0
+    while read -r pid; do
+        if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
+            ((count++))
+            
+            if [[ "$detailed" == "true" ]]; then
+                local proc_info=$(get_process_info "$pid" "true")
+                local cmdline=$(get_process_cmdline "$pid")
+                
+                echo -e "  ${BOLD}Process #$count${NC}"
+                echo -e "    PID: ${YELLOW}$pid${NC}"
+                echo -e "    Info: $proc_info"
+                echo -e "    Command: ${CYAN}$(echo "$cmdline" | cut -c1-80)${NC}"
+                
+                local comm=$(echo "$proc_info" | awk '{print $NF}')
+                if is_protected_process "$comm"; then
+                    echo -e "    ${RED}[PROTECTED PROCESS]${NC}"
+                fi
+                echo
+            else
+                local info=$(get_process_info "$pid")
+                local user=$(echo "$info" | awk '{print $1}')
+                local command=$(echo "$info" | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/ $//')
+                
+                local protection_status=""
+                if is_protected_process "$command"; then
+                    protection_status="${RED}[PROTECTED]${NC}"
+                fi
+                
+                printf "  ${YELLOW}%-8s${NC} ${CYAN}%-15s${NC} ${WHITE}%-30s${NC} %s\n" \
+                    "PID $pid" "$user" "$command" "$protection_status"
+            fi
+        fi
+    done <<< "$pids"
+    
+    if [[ $count -eq 0 ]]; then
+        print_colored "$YELLOW" "[i]" "No valid processes found"
+    else
+        echo
+        print_colored "$GREEN" "[i]" "Found $count process(es) on port $port"
+    fi
+}
+
+# List all listening ports
+list_all_listening_ports() {
+    show_section_header "All Listening Ports"
+    
+    echo -e "${CYAN}Scanning for all listening ports...${NC}"
+    echo
+    
+    local ports_info
+    if command -v lsof &> /dev/null; then
+        ports_info=$(lsof -i -P -n | grep LISTEN | sort -k9)
+    else
+        ports_info=$(netstat -an | grep LISTEN | sort)
+    fi
+    
+    echo -e "${BOLD}${WHITE}Port     Service          PID      User         Process${NC}"
+    echo -e "${GRAY}------------------------------------------------------------------------${NC}"
+    
+    local count=0
+    while IFS= read -r line; do
+        if [[ -n "$line" ]]; then
+            ((count++))
+            
+            local port=$(echo "$line" | awk '{print $9}' | cut -d':' -f2)
+            local pid=$(echo "$line" | awk '{print $2}')
+            local user=$(echo "$line" | awk '{print $3}')
+            local process=$(echo "$line" | awk '{print $1}')
+            local service=$(get_service_name "$port")
+            
+            printf "%-8s %-15s %-8s %-12s %s\n" \
+                "$port" "${service:-Unknown}" "$pid" "$user" "$process"
+        fi
+    done <<< "$ports_info"
+    
+    echo
+    print_colored "$GREEN" "[i]" "Found $count listening port(s)"
+}
+
+# Kill processes on port
+kill_processes() {
+    local port="$1"
+    local force="${2:-false}"
+    local dry_run="${3:-false}"
+    local interactive="${4:-false}"
+    local pids
+    local signal_name="SIGTERM"
+    local signal_num=15
+    local killed_count=0
+    local failed_count=0
+    
+    if [[ "$force" == "true" ]]; then
+        signal_name="SIGKILL"
+        signal_num=9
+    fi
+    
+    if ! pids=$(find_processes_on_port "$port"); then
+        print_colored "$YELLOW" "[i]" "No processes found on port $port"
+        return 0
+    fi
+    
+    local service_name=$(get_service_name "$port")
+    if [[ -n "$service_name" ]]; then
+        print_colored "$BLUE" "[>]" "Port $port ($service_name) - Processing..."
+    else
+        print_colored "$BLUE" "[>]" "Port $port - Processing..."
+    fi
+    echo
+    
+    while read -r pid; do
+        if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
+            local info=$(get_process_info "$pid")
+            local user=$(echo "$info" | awk '{print $1}')
+            local command=$(echo "$info" | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/ $//')
+            
+            if is_protected_process "$command" && [[ "$SAFE_MODE" == "true" ]]; then
+                print_colored "$YELLOW" "[!]" "SKIPPED: Protected system process $command (PID $pid)"
+                continue
+            fi
+            
+            if [[ "$interactive" == "true" && "$AUTO_CONFIRM" != "true" ]]; then
+                echo -ne "${WHITE}Kill process ${YELLOW}$pid${WHITE} (${CYAN}$command${WHITE}) with ${RED}$signal_name${WHITE}? (y/N/q): ${NC}"
+                read -r response
+                case "$response" in
+                    [Yy]) ;;
+                    [Qq]) print_colored "$GRAY" "[i]" "Operation cancelled"; return 0 ;;
+                    *) print_colored "$GRAY" "[i]" "Skipped PID $pid"; continue ;;
+                esac
+            fi
+            
+            if [[ "$dry_run" == "true" ]]; then
+                print_colored "$BLUE" "[i]" "DRY RUN: Would kill PID $pid ($command) on port $port with $signal_name"
+                ((killed_count++))
+            else
+                if [[ "$signal_num" -eq 9 ]] || kill -TERM "$pid" 2>/dev/null; then
+                    sleep 1
+                    
+                    if ps -p "$pid" > /dev/null 2>&1 && [[ "$signal_num" -eq 9 ]]; then
+                        if kill -KILL "$pid" 2>/dev/null; then
+                            print_colored "$RED" "[x]" "Force killed PID $pid ($command) on port $port"
+                        else
+                            print_colored "$RED" "[!]" "Failed to force kill PID $pid (may require sudo)"
+                            ((failed_count++))
+                            continue
+                        fi
+                    else
+                        print_colored "$GREEN" "[✓]" "Terminated PID $pid ($command) on port $port"
+                    fi
+                    
+                    ((killed_count++))
+                    add_to_history "KILL" "Port: $port, PID: $pid, Process: $command, Signal: $signal_name"
+                    log_message "INFO" "Killed process $pid ($command) on port $port with $signal_name"
+                else
+                    print_colored "$RED" "[!]" "Failed to kill PID $pid on port $port (may require sudo)"
+                    ((failed_count++))
+                fi
+            fi
+        fi
+    done <<< "$pids"
+    
+    echo
+    if [[ "$dry_run" == "true" ]]; then
+        print_colored "$BLUE" "[i]" "DRY RUN: Would process $killed_count process(es) on port $port"
+    else
+        if [[ $killed_count -gt 0 ]]; then
+            print_colored "$GREEN" "[✓]" "Successfully processed $killed_count process(es) on port $port"
+        fi
+        if [[ $failed_count -gt 0 ]]; then
+            print_colored "$RED" "[!]" "Failed to process $failed_count process(es)"
+        fi
+    fi
+}
+
+# Bulk kill operation
+bulk_kill_ports() {
+    local ports=("$@")
+    local total=${#ports[@]}
+    local current=0
+    
+    show_section_header "Bulk Port Operation"
+    
+    print_colored "$CYAN" "[i]" "Processing $total port(s)..."
+    echo
+    
+    for port in "${ports[@]}"; do
+        ((current++))
+        
+        echo -ne "\r"
+        show_progress_bar $current $total
+        echo
+        
+        print_colored "$YELLOW" "[>]" "Processing port $port ($current/$total)..."
+        kill_processes "$port" "$FORCE_MODE" "$DRY_RUN_MODE" "$INTERACTIVE_MODE"
+        echo
+        
+        sleep 0.5
+    done
+    
+    print_colored "$GREEN" "[✓]" "Bulk operation completed"
+}
+
+# Real-time port monitoring
+monitor_ports() {
+    local ports=("$@")
+    local update_interval="${MONITORING_INTERVAL:-2}"
+    
+    show_header
+    show_section_header "Real-time Port Monitoring"
+    
+    print_colored "$CYAN" "[i]" "Monitoring ${#ports[@]} port(s) - Press Ctrl+C to stop"
+    echo -e "${GRAY}Update interval: ${update_interval}s${NC}"
+    echo
+    
+    trap 'echo; print_colored "$YELLOW" "[i]" "Monitoring stopped"; exit 0' INT
+    
+    while true; do
+        for ((i=0; i<20; i++)); do
+            echo -e "\033[1A\033[2K"
+        done
+        
+        echo -e "${BOLD}${WHITE}Port Status ($(date '+%H:%M:%S'))${NC}"
+        echo -e "${GRAY}----------------------------------------${NC}"
+        
+        for port in "${ports[@]}"; do
+            local pids
+            if pids=$(find_processes_on_port "$port"); then
+                local count=$(echo "$pids" | wc -w)
+                local service=$(get_service_name "$port")
+                if [[ -n "$service" ]]; then
+                    print_colored "$GREEN" "[●]" "Port $port ($service): $count process(es) active"
+                else
+                    print_colored "$GREEN" "[●]" "Port $port: $count process(es) active"
+                fi
+                
+                local first_pids=$(echo "$pids" | tr ' ' '\n' | head -3 | tr '\n' ' ')
+                echo -e "    ${GRAY}PIDs: $first_pids${NC}"
+            else
+                local service=$(get_service_name "$port")
+                if [[ -n "$service" ]]; then
+                    print_colored "$GRAY" "[○]" "Port $port ($service): No processes"
+                else
+                    print_colored "$GRAY" "[○]" "Port $port: No processes"
+                fi
+            fi
+        done
+        
+        echo
+        print_colored "$CYAN" "[↻]" "Next update in ${update_interval}s... (Ctrl+C to stop)"
+        
+        sleep "$update_interval"
+    done
+}
+
+# Security scan for risky ports
+security_scan() {
+    show_section_header "Port Security Analysis"
+    
+    print_colored "$CYAN" "[i]" "Performing security analysis..."
+    echo
+    
+    echo -e "${BOLD}${WHITE}Scanning for potentially risky open ports...${NC}"
+    echo
+    
+    local risky_ports=(1433 3389 5900 5901 5902 21 23 135 139 445 1025 1433 1521 2049 3306 5432 6379 11211 27017)
+    local found_risky=0
+    
+    for port in "${risky_ports[@]}"; do
+        if find_processes_on_port "$port" >/dev/null 2>&1; then
+            ((found_risky++))
+            local service=$(get_service_name "$port")
+            print_colored "$RED" "[!]" "SECURITY RISK: Port $port${service:+ ($service)} is open"
+            
+            local pids=$(find_processes_on_port "$port")
+            while read -r pid; do
+                if [[ -n "$pid" ]]; then
+                    local info=$(get_process_info "$pid")
+                    local command=$(echo "$info" | awk '{for(i=2;i<=NF;i++) printf "%s ", $i}')
+                    echo -e "    ${GRAY}PID $pid: $command${NC}"
+                fi
+            done <<< "$pids"
+            echo
+        fi
+    done
+    
+    if [[ $found_risky -eq 0 ]]; then
+        print_colored "$GREEN" "[✓]" "No high-risk ports detected"
+    else
+        print_colored "$RED" "[!]" "Found $found_risky potentially risky open port(s)"
+    fi
+}
+
+# Interactive menu
+show_main_menu() {
+    show_header
+    
+    echo -e "${GREEN}Main Menu${NC}"
+    echo -e "${GRAY}----------------------------------------${NC}"
+    echo
+    echo "  1) List processes on specific port"
+    echo "  2) List all listening ports"
+    echo "  3) Kill processes on port"
+    echo "  4) Bulk kill multiple ports"
+    echo "  5) Monitor ports in real-time"
+    echo "  6) Security scan"
+    echo "  7) View operation history"
+    echo "  8) System information"
+    echo "  0) Exit"
+    echo
+}
+
+interactive_menu() {
+    while true; do
+        show_main_menu
+        
+        echo -ne "${WHITE}Select an option (0-8): ${NC}"
+        read -r choice
+        
+        case "$choice" in
+            1)
+                echo -ne "${WHITE}Enter port number: ${NC}"
+                read -r port
+                if validate_port "$port"; then
+                    list_processes "$port" false
+                    add_to_history "LIST" "Port: $port"
+                fi
+                echo -ne "${GRAY}Press Enter to continue...${NC}"
+                read -r
+                ;;
+            2)
+                list_all_listening_ports
+                add_to_history "SCAN" "Listed all listening ports"
+                echo -ne "${GRAY}Press Enter to continue...${NC}"
+                read -r
+                ;;
+            3)
+                echo -ne "${WHITE}Enter port number: ${NC}"
+                read -r port
+                if validate_port "$port"; then
+                    echo -ne "${WHITE}Use force kill? (y/N): ${NC}"
+                    read -r force
+                    [[ "$force" =~ ^[Yy]$ ]] && force=true || force=false
+                    
+                    kill_processes "$port" "$force" false true
+                fi
+                echo -ne "${GRAY}Press Enter to continue...${NC}"
+                read -r
+                ;;
+            4)
+                echo -ne "${WHITE}Enter ports (space-separated): ${NC}"
+                read -r -a ports
+                if [[ ${#ports[@]} -gt 0 ]]; then
+                    bulk_kill_ports "${ports[@]}"
+                fi
+                echo -ne "${GRAY}Press Enter to continue...${NC}"
+                read -r
+                ;;
+            5)
+                echo -ne "${WHITE}Enter ports to monitor (space-separated): ${NC}"
+                read -r -a ports
+                if [[ ${#ports[@]} -gt 0 ]]; then
+                    monitor_ports "${ports[@]}"
+                fi
+                ;;
+            6)
+                security_scan
+                add_to_history "SCAN" "Security scan performed"
+                echo -ne "${GRAY}Press Enter to continue...${NC}"
+                read -r
+                ;;
+            0)
+                print_colored "$GREEN" "[✓]" "Exiting PortKill"
+                exit 0
+                ;;
+            *)
+                print_colored "$RED" "[!]" "Invalid option. Please try again."
+                sleep 1
+                ;;
+        esac
+    done
+}
+
+# Help documentation
+show_help() {
+    echo -e "${BOLD}$SCRIPT_NAME $VERSION${NC}"
+    echo "Advanced Port Management & Network Analysis"
+    echo
+    echo "USAGE:"
+    echo "  $0 [OPTIONS] [COMMAND] [PORTS...]"
+    echo
+    echo "COMMANDS:"
+    echo "  list     [-d] <port>           List processes on port(s)"
+    echo "  kill     [-f] [-n] <port>      Kill processes on port(s)"
+    echo "  monitor  <ports>               Real-time monitoring"
+    echo "  scan     [--security]          Scan ports or security"
+    echo "  menu                           Interactive menu mode"
+    echo
+    echo "OPTIONS:"
+    echo "  -f, --force           Use SIGKILL instead of SIGTERM"
+    echo "  -d, --detailed        Show detailed process information"
+    echo "  -n, --dry-run         Show what would be done without doing it"
+    echo "  -i, --interactive     Interactive confirmation for each process"
+    echo "  -v, --verbose         Verbose output with logging"
+    echo "  -q, --quiet           Suppress headers and decorative output"
+    echo "  -s, --safe            Safe mode (protect system processes)"
+    echo "  --version             Show version information"
+    echo "  --help                Show this help message"
+    echo
+    echo "EXAMPLES:"
+    echo "  $0 list 3000                  # List processes on port 3000"
+    echo "  $0 kill -i 8080               # Kill processes on port 8080 (interactive)"
+    echo "  $0 kill --force 3000 8080     # Force kill processes on multiple ports"
+    echo "  $0 monitor 3000 8080          # Monitor ports in real-time"
+    echo "  $0 scan --security            # Security scan"
+    echo "  $0 menu                       # Interactive menu mode"
+}
+
+show_version() {
+    echo "$SCRIPT_NAME $VERSION"
+    echo "Copyright (c) 2025 $AUTHOR"
+    echo "Licensed under MIT License"
+}
+
+# Main function
+main() {
+    init_config
+    log_message "INFO" "PortKill $VERSION started"
+    
+    local ports=()
+    local command=""
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --help|-h)
+                show_help
+                exit 0
+                ;;
+            --version)
+                show_version
+                exit 0
+                ;;
+            --verbose|-v)
+                VERBOSE_MODE=true
+                shift
+                ;;
+            --quiet|-q)
+                SHOW_HEADERS=false
+                VERBOSE_MODE=false
+                shift
+                ;;
+            --safe|-s)
+                SAFE_MODE=true
+                shift
+                ;;
+            --force|-f)
+                FORCE_MODE=true
+                shift
+                ;;
+            --dry-run|-n)
+                DRY_RUN_MODE=true
+                shift
+                ;;
+            --interactive|-i)
+                INTERACTIVE_MODE=true
+                shift
+                ;;
+            --detailed|-d)
+                DETAILED_MODE=true
+                shift
+                ;;
+            -l|--list)
+                command="list"
+                shift
+                ;;
+            list|kill|monitor|menu)
+                command="$1"
+                shift
+                break
+                ;;
+            scan)
+                command="$1"
+                shift
+                if [[ "$1" == "--security" ]]; then
+                    SECURITY_SCAN=true
+                    shift
+                fi
+                break
+                ;;
+            -*)
+                print_colored "$RED" "[!]" "Unknown option: $1"
+                echo "Use --help for usage information"
+                exit 1
+                ;;
+            *)
+                if validate_port "$1" 2>/dev/null; then
+                    ports+=("$1")
+                else
+                    command="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+    
+    while [[ $# -gt 0 ]]; do
+        if validate_port "$1"; then
+            ports+=("$1")
+        else
+            print_colored "$RED" "[!]" "Invalid port: $1"
+            exit 1
+        fi
+        shift
+    done
+    
+    case "$command" in
+        list)
+            if [[ ${#ports[@]} -eq 0 ]]; then
+                list_all_listening_ports
+            else
+                for port in "${ports[@]}"; do
+                    list_processes "$port" "${DETAILED_MODE:-false}"
+                    add_to_history "LIST" "Port: $port, Detailed: ${DETAILED_MODE:-false}"
+                done
+            fi
+            ;;
+        kill)
+            if [[ ${#ports[@]} -eq 0 ]]; then
+                print_colored "$RED" "[!]" "No ports specified for kill command"
+                exit 1
+            fi
+            
+            if [[ ${#ports[@]} -gt 1 ]]; then
+                bulk_kill_ports "${ports[@]}"
+            else
+                kill_processes "${ports[0]}" "${FORCE_MODE:-false}" "${DRY_RUN_MODE:-false}" "${INTERACTIVE_MODE:-false}"
+            fi
+            ;;
+        monitor)
+            if [[ ${#ports[@]} -eq 0 ]]; then
+                print_colored "$RED" "[!]" "No ports specified for monitoring"
+                exit 1
+            fi
+            monitor_ports "${ports[@]}"
+            ;;
+        scan)
+            if [[ "$SECURITY_SCAN" == "true" ]]; then
+                security_scan
+            else
+                list_all_listening_ports
+            fi
+            add_to_history "SCAN" "Type: ${SECURITY_SCAN:+security}"
+            ;;
+        menu)
+            INTERACTIVE_MODE=true
+            interactive_menu
+            ;;
+        "")
+            if [[ ${#ports[@]} -gt 0 ]]; then
+                if [[ "$DRY_RUN_MODE" == "true" ]]; then
+                    for port in "${ports[@]}"; do
+                        kill_processes "$port" "${FORCE_MODE:-false}" "true" "${INTERACTIVE_MODE:-false}"
+                    done
+                else
+                    for port in "${ports[@]}"; do
+                        list_processes "$port" "${DETAILED_MODE:-false}"
+                    done
+                fi
+            else
+                INTERACTIVE_MODE=true
+                interactive_menu
+            fi
+            ;;
+        *)
+            print_colored "$RED" "[!]" "Unknown command: $command"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+    
+    log_message "INFO" "PortKill operation completed"
+}
+
+# Check dependencies
+check_dependencies() {
+    local missing=()
+    
+    local required_commands=("lsof" "ps" "kill" "netstat")
+    for cmd in "${required_commands[@]}"; do
+        if ! command -v "$cmd" &> /dev/null; then
+            missing+=("$cmd")
+        fi
+    done
+    
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        print_colored "$RED" "[!]" "Missing required commands: ${missing[*]}"
+        echo "Please install missing dependencies and try again"
+        exit 1
+    fi
+}
+
+# Signal handlers
+setup_signal_handlers() {
+    trap cleanup_on_exit EXIT
+    trap handle_interrupt INT
+}
+
+cleanup_on_exit() {
+    log_message "INFO" "PortKill session ended"
+}
+
+handle_interrupt() {
+    echo
+    print_colored "$YELLOW" "[i]" "Operation interrupted by user"
+    log_message "INFO" "Operation interrupted by user"
+    exit 130
+}
+
+# Check platform
+if [[ "$OSTYPE" != "darwin"* ]] && [[ "$OSTYPE" != "linux"* ]]; then
+    print_colored "$RED" "[!]" "This tool is designed for macOS and Linux"
+    exit 1
+fi
+
+setup_signal_handlers
+check_dependencies
+main "$@"
