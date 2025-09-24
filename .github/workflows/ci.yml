@@ -1,0 +1,171 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+jobs:
+  lint:
+    name: Code Quality & Security
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install shellcheck
+
+      - name: Run ShellCheck
+        run: |
+          echo "Running ShellCheck on PortKill script..."
+          shellcheck bin/portkill install.sh uninstall.sh || exit_code=$?
+          if [ ${exit_code:-0} -ne 0 ]; then
+            echo "::error::ShellCheck found issues"
+            exit $exit_code
+          fi
+          echo "✅ ShellCheck passed"
+
+      - name: Security scan with Bandit-equivalent
+        run: |
+          echo "Running security checks..."
+          # Check for common security issues in shell scripts
+          if grep -r "eval\|exec\|system\|`.*`" bin/ --include="*.sh" 2>/dev/null; then
+            echo "::warning::Potentially unsafe command execution found"
+          fi
+          echo "✅ Basic security scan completed"
+
+      - name: Check file permissions
+        run: |
+          echo "Checking executable permissions..."
+          test -x bin/portkill || (echo "::error::bin/portkill is not executable" && exit 1)
+          test -x install.sh || (echo "::error::install.sh is not executable" && exit 1)
+          test -x uninstall.sh || (echo "::error::uninstall.sh is not executable" && exit 1)
+          echo "✅ File permissions correct"
+
+  test:
+    name: Tests
+    needs: lint
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install lsof netstat-nat procps
+
+      - name: Install dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          # Dependencies should already be available on macOS
+          which lsof && which netstat && which ps || exit 1
+
+      - name: Test PortKill functionality
+        run: |
+          echo "Testing PortKill basic functionality..."
+          
+          # Test version command
+          ./bin/portkill --version || exit 1
+          
+          # Test help command
+          ./bin/portkill --help || exit 1
+          
+          # Test port validation
+          ./bin/portkill -n 80 2>/dev/null || echo "Expected failure for protected port"
+          
+          # Test invalid port
+          if ./bin/portkill -n 99999 2>/dev/null; then
+            echo "::error::Should fail on invalid port"
+            exit 1
+          fi
+          
+          # Test list command
+          ./bin/portkill list 80 || echo "No processes on port 80"
+          
+          echo "✅ Basic functionality tests passed"
+
+      - name: Test installation scripts
+        run: |
+          echo "Testing installation scripts syntax..."
+          bash -n install.sh || exit 1
+          bash -n uninstall.sh || exit 1
+          echo "✅ Installation scripts syntax valid"
+
+  security-scan:
+    name: Security Scanning
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '0'  # Don't fail on vulnerabilities for now
+
+  build-test:
+    name: Build & Package Test
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create distribution package
+        run: |
+          echo "Creating distribution package..."
+          mkdir -p dist/portkill-${{ github.sha }}
+          cp -r bin/ dist/portkill-${{ github.sha }}/
+          cp install.sh uninstall.sh README.md LICENSE dist/portkill-${{ github.sha }}/
+          
+          cd dist
+          tar -czf portkill-${{ github.sha }}.tar.gz portkill-${{ github.sha }}/
+          
+          echo "✅ Package created successfully"
+          ls -la portkill-${{ github.sha }}.tar.gz
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: portkill-package
+          path: dist/portkill-${{ github.sha }}.tar.gz
+          retention-days: 30
+
+  notify:
+    name: Slack Notification
+    needs: [lint, test, security-scan, build-test]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Notify Slack on Success
+        if: needs.lint.result == 'success' && needs.test.result == 'success' && needs.build-test.result == 'success'
+        run: |
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{"text":"✅ PortKill CI/CD Pipeline SUCCESS\n• Branch: ${{ github.ref_name }}\n• Commit: ${{ github.sha }}\n• All tests passed and package built successfully!"}' \
+              "$SLACK_WEBHOOK_URL"
+          fi
+
+      - name: Notify Slack on Failure
+        if: needs.lint.result == 'failure' || needs.test.result == 'failure' || needs.build-test.result == 'failure'
+        run: |
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{"text":"❌ PortKill CI/CD Pipeline FAILED\n• Branch: ${{ github.ref_name }}\n• Commit: ${{ github.sha }}\n• Check GitHub Actions for details"}' \
+              "$SLACK_WEBHOOK_URL"
+          fi

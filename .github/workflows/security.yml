@@ -1,0 +1,256 @@
+name: Security & Code Quality
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run weekly security scans
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+
+jobs:
+  shellcheck:
+    name: ShellCheck Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: './bin'
+          additional_files: 'install.sh uninstall.sh tests/test_portkill.sh'
+          severity: warning
+          format: gcc
+
+  security-scan:
+    name: Security Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  secret-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  code-quality:
+    name: Code Quality Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install analysis tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck bandit
+
+      - name: Analyze shell scripts
+        run: |
+          echo "=== Shell Script Analysis ==="
+          find . -name "*.sh" -type f | while read -r script; do
+            echo "Analyzing: $script"
+            
+            # Check syntax
+            bash -n "$script" || echo "❌ Syntax error in $script"
+            
+            # Check for common issues
+            if grep -n "eval\|exec.*\$\|system(" "$script"; then
+              echo "⚠️ Potentially dangerous command execution in $script"
+            fi
+            
+            # Check for hardcoded secrets patterns
+            if grep -i -n "password\|secret\|key.*=" "$script" | grep -v "GITHUB_TOKEN\|secrets\\."; then
+              echo "⚠️ Potential hardcoded secret in $script"
+            fi
+            
+            echo "✅ Analysis complete for $script"
+            echo
+          done
+
+      - name: Check file permissions
+        run: |
+          echo "=== File Permissions Check ==="
+          find . -type f -name "*.sh" | while read -r file; do
+            if [[ ! -x "$file" ]]; then
+              echo "⚠️ $file is not executable"
+            else
+              echo "✅ $file has correct permissions"
+            fi
+          done
+
+      - name: Check for TODO/FIXME comments
+        run: |
+          echo "=== Code Quality Issues ==="
+          grep -rn "TODO\|FIXME\|XXX\|HACK" --include="*.sh" . || echo "✅ No TODO/FIXME comments found"
+
+      - name: Dependency check
+        run: |
+          echo "=== Dependency Verification ==="
+          REQUIRED_DEPS="lsof ps kill netstat"
+          
+          echo "Checking for required dependencies in documentation..."
+          for dep in $REQUIRED_DEPS; do
+            if grep -q "$dep" README.md; then
+              echo "✅ $dep mentioned in README.md"
+            else
+              echo "⚠️ $dep not mentioned in README.md"
+            fi
+          done
+
+  license-compliance:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check license headers
+        run: |
+          echo "=== License Compliance Check ==="
+          
+          # Check if LICENSE file exists
+          if [[ ! -f "LICENSE" ]]; then
+            echo "❌ LICENSE file not found"
+            exit 1
+          fi
+          
+          echo "✅ LICENSE file exists"
+          
+          # Check for copyright notices in main scripts
+          SCRIPTS_TO_CHECK="bin/portkill install.sh uninstall.sh"
+          
+          for script in $SCRIPTS_TO_CHECK; do
+            if [[ -f "$script" ]]; then
+              if grep -q "Copyright" "$script"; then
+                echo "✅ Copyright notice found in $script"
+              else
+                echo "⚠️ No copyright notice in $script"
+              fi
+            fi
+          done
+
+  documentation-quality:
+    name: Documentation Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install markdownlint
+        run: npm install -g markdownlint-cli
+
+      - name: Lint Markdown files
+        run: markdownlint README.md CONTRIBUTING.md --ignore node_modules || true
+
+      - name: Check documentation completeness
+        run: |
+          echo "=== Documentation Quality Check ==="
+          
+          # Check README sections
+          REQUIRED_SECTIONS="Installation Usage Features Requirements"
+          
+          for section in $REQUIRED_SECTIONS; do
+            if grep -qi "## $section\|# $section" README.md; then
+              echo "✅ $section section found in README.md"
+            else
+              echo "⚠️ $section section missing from README.md"
+            fi
+          done
+          
+          # Check for examples
+          if grep -q "```bash" README.md; then
+            echo "✅ Code examples found in README.md"
+          else
+            echo "⚠️ No code examples in README.md"
+          fi
+
+  performance-check:
+    name: Basic Performance Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y lsof netstat-nat procps time
+
+      - name: Performance benchmarks
+        run: |
+          echo "=== Performance Benchmarks ==="
+          
+          # Test script startup time
+          echo "Testing startup time..."
+          for i in {1..5}; do
+            /usr/bin/time -f "Startup time: %e seconds" ./bin/portkill --version 2>&1 | grep "Startup time"
+          done
+          
+          # Test help command performance
+          echo "Testing help command..."
+          /usr/bin/time -f "Help command: %e seconds" ./bin/portkill --help >/dev/null 2>&1 | grep "Help command" || echo "Help command completed"
+          
+          echo "✅ Performance tests completed"
+
+  report:
+    name: Security & Quality Report
+    needs: [shellcheck, security-scan, secret-scan, code-quality, license-compliance, documentation-quality, performance-check]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Generate report
+        run: |
+          echo "=== PortKill Security & Quality Report ==="
+          echo "Date: $(date)"
+          echo "Commit: ${{ github.sha }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo
+          echo "Job Results:"
+          echo "- ShellCheck: ${{ needs.shellcheck.result }}"
+          echo "- Security Scan: ${{ needs.security-scan.result }}"
+          echo "- Secret Scan: ${{ needs.secret-scan.result }}"
+          echo "- Code Quality: ${{ needs.code-quality.result }}"
+          echo "- License Compliance: ${{ needs.license-compliance.result }}"
+          echo "- Documentation Quality: ${{ needs.documentation-quality.result }}"
+          echo "- Performance Check: ${{ needs.performance-check.result }}"
+          
+          # Determine overall status
+          FAILED_JOBS=0
+          for result in "${{ needs.shellcheck.result }}" "${{ needs.security-scan.result }}" "${{ needs.secret-scan.result }}" "${{ needs.code-quality.result }}" "${{ needs.license-compliance.result }}" "${{ needs.documentation-quality.result }}" "${{ needs.performance-check.result }}"; do
+            if [[ "$result" == "failure" ]]; then
+              ((FAILED_JOBS++))
+            fi
+          done
+          
+          if [[ $FAILED_JOBS -eq 0 ]]; then
+            echo "🎉 All security and quality checks passed!"
+          else
+            echo "⚠️ $FAILED_JOBS security/quality check(s) failed"
+          fi
