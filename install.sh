@@ -54,26 +54,23 @@ check_dependencies() {
 }
 
 download_portkill() {
-    # Check if we're running locally first
-    if [[ -f "bin/portkill" ]]; then
-        print_colored "$BLUE" "Using local PortKill script..."
-        echo "$(pwd)"
-        return 0
-    fi
-    
     local temp_dir=$(mktemp -d)
     local script_url="$REPO_URL/raw/main/bin/portkill"
     
-    print_colored "$BLUE" "Downloading PortKill..."
+    print_colored "$BLUE" "Downloading PortKill from GitHub..."
     
     if command -v curl &> /dev/null; then
-        if ! curl -sSL "$script_url" -o "$temp_dir/portkill" 2>/dev/null; then
+        if curl -sSL "$script_url" -o "$temp_dir/portkill" 2>/dev/null; then
+            print_colored "$GREEN" "Download complete"
+        else
             print_colored "$RED" "Error: Failed to download PortKill"
             rm -rf "$temp_dir"
             exit 1
         fi
     elif command -v wget &> /dev/null; then
-        if ! wget -qO "$temp_dir/portkill" "$script_url" 2>/dev/null; then
+        if wget -qO "$temp_dir/portkill" "$script_url" 2>/dev/null; then
+            print_colored "$GREEN" "Download complete"
+        else
             print_colored "$RED" "Error: Failed to download PortKill"
             rm -rf "$temp_dir"
             exit 1
@@ -91,9 +88,9 @@ install_portkill() {
     local source_dir=$1
     local script_path="$source_dir/portkill"
     
-    # Check if we're using local or downloaded script
-    if [[ -f "$source_dir/bin/portkill" ]]; then
-        script_path="$source_dir/bin/portkill"
+    if [[ ! -f "$script_path" ]]; then
+        print_colored "$RED" "Error: Script not found at $script_path"
+        exit 1
     fi
     
     if [[ ! -w "$INSTALL_DIR" ]]; then
@@ -105,10 +102,8 @@ install_portkill() {
         chmod +x "$INSTALL_DIR/$SCRIPT_NAME"
     fi
     
-    # Only remove if it's a temp directory
-    if [[ "$source_dir" == /tmp/* ]] || [[ "$source_dir" == /var/folders/* ]]; then
-        rm -rf "$source_dir"
-    fi
+    # Clean up temp directory
+    rm -rf "$source_dir"
 }
 
 verify_installation() {
@@ -141,7 +136,6 @@ main() {
     
     # Download PortKill
     temp_dir=$(download_portkill)
-    print_colored "$GREEN" "Download complete"
     
     # Install
     print_colored "$BLUE" "Installing to $INSTALL_DIR..."
