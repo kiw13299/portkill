@@ -57,26 +57,26 @@ download_portkill() {
     local temp_dir=$(mktemp -d)
     local script_url="$REPO_URL/raw/main/bin/portkill"
     
-    print_colored "$BLUE" "Downloading PortKill from GitHub..."
+    print_colored "$BLUE" "Downloading PortKill from GitHub..." >&2
     
     if command -v curl &> /dev/null; then
         if curl -sSL "$script_url" -o "$temp_dir/portkill" 2>/dev/null; then
-            print_colored "$GREEN" "Download complete"
+            print_colored "$GREEN" "Download complete" >&2
         else
-            print_colored "$RED" "Error: Failed to download PortKill"
+            print_colored "$RED" "Error: Failed to download PortKill" >&2
             rm -rf "$temp_dir"
             exit 1
         fi
     elif command -v wget &> /dev/null; then
         if wget -qO "$temp_dir/portkill" "$script_url" 2>/dev/null; then
-            print_colored "$GREEN" "Download complete"
+            print_colored "$GREEN" "Download complete" >&2
         else
-            print_colored "$RED" "Error: Failed to download PortKill"
+            print_colored "$RED" "Error: Failed to download PortKill" >&2
             rm -rf "$temp_dir"
             exit 1
         fi
     else
-        print_colored "$RED" "Error: curl or wget is required for installation"
+        print_colored "$RED" "Error: curl or wget is required for installation" >&2
         rm -rf "$temp_dir"
         exit 1
     fi
