@@ -118,6 +118,27 @@ Benchmarks on macOS 14.0 (M1):
 - Process termination: ~120ms
 - Port scan (all ports): ~2.3s
 
+## Uninstall
+
+### Automatic Removal
+```bash
+curl -sSL https://raw.githubusercontent.com/mr-tanta/portkill/main/uninstall.sh | bash
+```
+
+### Manual Removal
+```bash
+# Standard installation location
+sudo rm /usr/local/bin/portkill
+
+# Or find and remove from PATH
+which portkill | xargs sudo rm
+```
+
+### Homebrew
+```bash
+brew uninstall portkill
+```
+
 ## Requirements
 
 - macOS 10.12+ or Linux kernel 3.10+
