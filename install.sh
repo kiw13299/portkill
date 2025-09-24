@@ -54,23 +54,30 @@ check_dependencies() {
 }
 
 download_portkill() {
+    # Check if we're running locally first
+    if [[ -f "bin/portkill" ]]; then
+        print_colored "$BLUE" "Using local PortKill script..."
+        echo "$(pwd)"
+        return 0
+    fi
+    
     local temp_dir=$(mktemp -d)
     local script_url="$REPO_URL/raw/main/bin/portkill"
     
     print_colored "$BLUE" "Downloading PortKill..."
     
     if command -v curl &> /dev/null; then
-        curl -sSL "$script_url" -o "$temp_dir/portkill" || {
+        if ! curl -sSL "$script_url" -o "$temp_dir/portkill" 2>/dev/null; then
             print_colored "$RED" "Error: Failed to download PortKill"
             rm -rf "$temp_dir"
             exit 1
-        }
+        fi
     elif command -v wget &> /dev/null; then
-        wget -qO "$temp_dir/portkill" "$script_url" || {
+        if ! wget -qO "$temp_dir/portkill" "$script_url" 2>/dev/null; then
             print_colored "$RED" "Error: Failed to download PortKill"
             rm -rf "$temp_dir"
             exit 1
-        }
+        fi
     else
         print_colored "$RED" "Error: curl or wget is required for installation"
         rm -rf "$temp_dir"
@@ -81,18 +88,27 @@ download_portkill() {
 }
 
 install_portkill() {
-    local temp_dir=$1
+    local source_dir=$1
+    local script_path="$source_dir/portkill"
+    
+    # Check if we're using local or downloaded script
+    if [[ -f "$source_dir/bin/portkill" ]]; then
+        script_path="$source_dir/bin/portkill"
+    fi
     
     if [[ ! -w "$INSTALL_DIR" ]]; then
         print_colored "$YELLOW" "Root access required for installation to $INSTALL_DIR"
-        sudo cp "$temp_dir/portkill" "$INSTALL_DIR/$SCRIPT_NAME"
+        sudo cp "$script_path" "$INSTALL_DIR/$SCRIPT_NAME"
         sudo chmod +x "$INSTALL_DIR/$SCRIPT_NAME"
     else
-        cp "$temp_dir/portkill" "$INSTALL_DIR/$SCRIPT_NAME"
+        cp "$script_path" "$INSTALL_DIR/$SCRIPT_NAME"
         chmod +x "$INSTALL_DIR/$SCRIPT_NAME"
     fi
     
-    rm -rf "$temp_dir"
+    # Only remove if it's a temp directory
+    if [[ "$source_dir" == /tmp/* ]] || [[ "$source_dir" == /var/folders/* ]]; then
+        rm -rf "$source_dir"
+    fi
 }
 
 verify_installation() {
