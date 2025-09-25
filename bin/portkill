@@ -255,7 +255,7 @@ find_processes_on_port() {
     
     # Fallback to netstat
     if [[ -z "$pids" ]] && command -v netstat &> /dev/null; then
-        pids=$(netstat -anv | grep ":$port " | awk '{print $9}' | cut -d'.' -f1 2>/dev/null || true)
+        pids=$(netstat -anv 2>/dev/null | grep ":$port " | awk '{print $9}' | cut -d'.' -f1 2>/dev/null || true)
     fi
     
     # Fallback to fuser
@@ -586,7 +586,7 @@ list_all_listening_ports() {
     if command -v lsof &> /dev/null; then
         ports_info=$(lsof -i -P -n | grep LISTEN | sort -k9)
     else
-        ports_info=$(netstat -an | grep LISTEN | sort)
+        ports_info=$(netstat -an 2>/dev/null | grep LISTEN | sort)
     fi
     
     echo -e "${BOLD}${WHITE}Port     Service          PID      User         Process${NC}"
