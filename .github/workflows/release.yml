@@ -41,8 +41,10 @@ jobs:
             VERSION="${{ github.ref_name }}"
           fi
           VERSION_NUMBER="${VERSION#v}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
+          {
+            echo "version=$VERSION"
+            echo "version_number=$VERSION_NUMBER"
+          } >> "$GITHUB_OUTPUT"
           echo "Releasing version: $VERSION"
 
       - name: Validate version format
@@ -148,9 +150,11 @@ jobs:
           \`\`\`
           EOF
           
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          cat CHANGELOG.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          {
+            echo "changelog<<EOF"
+            cat CHANGELOG.md
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create release packages
         run: |
@@ -221,12 +225,14 @@ jobs:
     name: Update Homebrew Formula
     needs: [validate-release, create-release]
     runs-on: ubuntu-latest
+    # Only run if PAT_TOKEN is available for cross-repo access
+    if: vars.HOMEBREW_UPDATE_ENABLED == 'true' && secrets.PAT_TOKEN != ''
     steps:
       - name: Checkout homebrew tap
         uses: actions/checkout@v4
         with:
           repository: mr-tanta/homebrew-portkill
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
           path: homebrew-tap
 
       - name: Calculate new SHA256
@@ -237,7 +243,7 @@ jobs:
           
           echo "Downloading $URL to calculate SHA256..."
           SHA256=$(curl -sSL "$URL" | sha256sum | cut -d' ' -f1)
-          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
           echo "Calculated SHA256: $SHA256"
 
       - name: Update Homebrew formula
@@ -279,7 +285,7 @@ jobs:
     if: always()
     steps:
       - name: Notify Slack on Success
-        if: needs.create-release.result == 'success' && needs.update-homebrew.result == 'success'
+        if: needs.create-release.result == 'success' && (needs.update-homebrew.result == 'success' || needs.update-homebrew.result == 'skipped')
         run: |
           VERSION="${{ needs.validate-release.outputs.version }}"
           if [ -n "$SLACK_WEBHOOK_URL" ]; then
@@ -313,7 +319,7 @@ jobs:
                     },
                     {
                       "title": "Status",
-                      "value": "• ✅ GitHub Release Created\n• ✅ Homebrew Formula Updated\n• ✅ Distribution Packages Ready",
+                      "value": "• ✅ GitHub Release Created\n• ${{ needs.update-homebrew.result == 'success' && '✅' || '⏭️' }} Homebrew Formula ${{ needs.update-homebrew.result == 'success' && 'Updated' || 'Skipped' }}\n• ✅ Distribution Packages Ready",
                       "short": false
                     }
                   ],
