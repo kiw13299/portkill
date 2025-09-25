@@ -721,7 +721,7 @@ show_port_analytics() {
         
         # Today's activity
         local today; today=$(date '+%Y-%m-%d')
-        local today_count; today_count=$(grep "^$today" "$HISTORY_FILE" 2>/dev/null | wc -l)
+        local today_count; today_count=$(grep -c "^$today" "$HISTORY_FILE" 2>/dev/null || echo "0")
         print_colored "$GREEN" "[●]" "$today_count operations today"
     else
         print_colored "$YELLOW" "[i]" "Unable to calculate date ranges on this system"
@@ -739,7 +739,7 @@ clear_history() {
     local current_entries; current_entries=$(wc -l < "$HISTORY_FILE" 2>/dev/null || echo "0")
     
     if [[ "$keep_entries" == "all" ]]; then
-        > "$HISTORY_FILE"
+        true > "$HISTORY_FILE"
         print_colored "$GREEN" "[✓]" "All history entries cleared"
         add_to_history "ADMIN" "History cleared completely"
     else
@@ -777,7 +777,7 @@ export_history() {
                      {if(!first) print ","; first=0;
                       gsub(/"/, "\\""_, $3);
                       printf "{\"timestamp\":\"%s\",\"action\":\"%s\",\"details\":\"%s\"}", $1, $2, $3}' "$HISTORY_FILE"
-                echo '\n]'
+                printf '\n]\n'
             } > "$output_file"
             ;;
         *)
