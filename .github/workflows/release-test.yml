@@ -1,0 +1,40 @@
+name: 🧪 Test Release Workflow
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to test'
+        required: true
+        type: string
+
+jobs:
+  test:
+    name: Test Triggers
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: Print Event Info
+        run: |
+          echo "Event: ${{ github.event_name }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Ref Type: ${{ github.ref_type }}"
+          echo "Ref Name: ${{ github.ref_name }}"
+          
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Manual version: ${{ inputs.version }}"
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "Tag pushed: ${{ github.ref_name }}"
+          fi
+          
+      - name: Success Message
+        run: |
+          echo "✅ Workflow trigger is working correctly!"
+          echo "This workflow should only run on:"
+          echo "  1. Tag pushes (v*)"
+          echo "  2. Manual dispatch"
+          echo "This run was triggered by: ${{ github.event_name }}"
