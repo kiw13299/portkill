@@ -1198,7 +1198,6 @@ benchmark_port() {
         fi
     }
     
-    local port_check_result
     if command -v nc &> /dev/null; then
         if run_with_timeout "$timeout_seconds" nc -z "$host" "$port" 2>/dev/null; then
             print_colored "$GREEN" "[✓]" "Port $port is accessible on $host"
@@ -1352,7 +1351,7 @@ benchmark_port() {
         # Calculate percentiles if we have enough data
         if [[ ${#response_times[@]} -ge 5 ]]; then
             local sorted_times
-            IFS=$'\n' sorted_times=($(printf '%s\n' "${response_times[@]}" | sort -n))
+            mapfile -t sorted_times < <(printf '%s\n' "${response_times[@]}" | sort -n)
             
             local p50_index=$(( ${#sorted_times[@]} * 50 / 100 ))
             local p95_index=$(( ${#sorted_times[@]} * 95 / 100 ))
