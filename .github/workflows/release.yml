@@ -319,7 +319,7 @@ jobs:
                     },
                     {
                       "title": "Status",
-                      "value": "• ✅ GitHub Release Created\n• ${{ needs.update-homebrew.result == 'success' && '✅' || '⏭️' }} Homebrew Formula ${{ needs.update-homebrew.result == 'success' && 'Updated' || 'Skipped' }}\n• ✅ Distribution Packages Ready",
+                      "value": "• ✅ GitHub Release Created\n• ✅ Homebrew Formula Skipped (PAT token required)\n• ✅ Distribution Packages Ready",
                       "short": false
                     }
                   ],
