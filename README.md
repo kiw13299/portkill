@@ -11,6 +11,7 @@ PortKill provides a streamlined interface for managing port conflicts during dev
 - **Intelligent Process Detection**: Multiple fallback methods ensure reliable process identification
 - **Safe Process Management**: System-critical processes are protected by default
 - **Interactive Mode**: Terminal UI for visual port management
+- **Process Tree Visualization**: Display hierarchical process relationships
 - **Bulk Operations**: Manage multiple ports simultaneously
 - **Real-time Monitoring**: Continuously monitor port activity
 - **Cross-platform**: Works on macOS and Linux systems
@@ -64,6 +65,16 @@ Monitor ports in real-time:
 portkill monitor 3000 8080
 ```
 
+Show process tree for a port:
+```bash
+portkill tree 3000
+```
+
+Show process tree with custom depth:
+```bash
+portkill tree --depth 3 8080
+```
+
 ### Advanced Usage
 
 Interactive mode:
@@ -97,6 +108,7 @@ portkill --interactive 8080
 |---------|-------------|---------|
 | *default* | Kill processes on port(s) | `portkill 3000` |
 | `list` | Show processes on port(s) | `portkill list 3000` |
+| `tree` | Show process tree hierarchy | `portkill tree 3000` |
 | `scan` | Display all listening ports | `portkill scan` |
 | `monitor` | Real-time port monitoring | `portkill monitor 3000 8080` |
 | `menu` | Launch interactive interface | `portkill menu` |

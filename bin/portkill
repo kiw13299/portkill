@@ -8,7 +8,7 @@ set -e
 
 # Script metadata
 readonly SCRIPT_NAME="PortKill"
-readonly VERSION="2.1.0"
+readonly VERSION="2.2.0"
 readonly AUTHOR="Abraham Esandayinze Tanta"
 readonly CONFIG_DIR="$HOME/.portkill"
 readonly LOG_FILE="$CONFIG_DIR/portkill.log"
@@ -295,6 +295,203 @@ get_process_cmdline() {
     else
         ps -p "$pid" -o args= 2>/dev/null || echo "N/A"
     fi
+}
+
+# Get parent PID of a process
+get_parent_pid() {
+    local pid="$1"
+    
+    # Try different methods to get PPID
+    if [[ -r "/proc/$pid/stat" ]]; then
+        awk '{print $4}' "/proc/$pid/stat" 2>/dev/null
+    else
+        ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' '
+    fi
+}
+
+# Get all child PIDs of a process
+get_child_pids() {
+    local parent_pid="$1"
+    
+    # Use pgrep if available, otherwise fallback to ps
+    if command -v pgrep &> /dev/null; then
+        pgrep -P "$parent_pid" 2>/dev/null || true
+    else
+        ps -eo pid,ppid | awk -v ppid="$parent_pid" '$2 == ppid {print $1}' 2>/dev/null || true
+    fi
+}
+
+# Build process tree recursively
+build_process_tree() {
+    local pid="$1"
+    local prefix="$2"
+    local is_last="${3:-false}"
+    local level="${4:-0}"
+    local max_level="${5:-5}"
+    
+    # Prevent infinite recursion
+    if [[ $level -gt $max_level ]]; then
+        return
+    fi
+    
+    # Get process info
+    local info; info=$(get_process_info "$pid")
+    local user; user=$(echo "$info" | awk '{print $1}')
+    local command; command=$(echo "$info" | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/ $//')
+    
+    # Handle cases where process might not exist
+    if [[ "$user" == "unknown" || -z "$command" ]]; then
+        return
+    fi
+    
+    # Choose the appropriate tree characters
+    local tree_char="├──"
+    local continuation="│   "
+    if [[ "$is_last" == "true" ]]; then
+        tree_char="└──"
+        continuation="    "
+    fi
+    
+    # Display current process
+    local protection_status=""
+    if is_protected_process "$command"; then
+        protection_status="${RED}[PROTECTED]${NC} "
+    fi
+    
+    printf "%s%s ${YELLOW}PID %s${NC} ${CYAN}(%s)${NC} ${WHITE}%s${NC} %s\n" \
+        "$prefix" "$tree_char" "$pid" "$user" "$command" "$protection_status"
+    
+    # Get children
+    local children; children=$(get_child_pids "$pid")
+    if [[ -n "$children" ]]; then
+        local child_array; read -ra child_array <<< "$children"
+        local child_count=${#child_array[@]}
+        
+        for ((i=0; i<child_count; i++)); do
+            local child_pid="${child_array[i]}"
+            local is_last_child=false
+            
+            if [[ $((i + 1)) -eq $child_count ]]; then
+                is_last_child=true
+            fi
+            
+            build_process_tree "$child_pid" "$prefix$continuation" "$is_last_child" $((level + 1)) "$max_level"
+        done
+    fi
+}
+
+# Show process tree for port
+show_process_tree() {
+    local port="$1"
+    local max_depth="${2:-5}"
+    local pids
+    
+    if ! pids=$(find_processes_on_port "$port"); then
+        print_colored "$YELLOW" "[i]" "No processes found on port $port"
+        return 0
+    fi
+    
+    local service_name; service_name=$(get_service_name "$port")
+    if [[ -n "$service_name" ]]; then
+        show_section_header "Process Tree for Port $port ($service_name)"
+    else
+        show_section_header "Process Tree for Port $port"
+    fi
+    
+    print_colored "$CYAN" "[i]" "Showing process hierarchy (max depth: $max_depth)"
+    echo
+    
+    # Build a complete process tree for each root process
+    local processed_pids=()
+    
+    while read -r pid; do
+        if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
+            # Check if this PID is already processed as a child
+            local already_processed=false
+            for processed in "${processed_pids[@]}"; do
+                if [[ "$processed" == "$pid" ]]; then
+                    already_processed=true
+                    break
+                fi
+            done
+            
+            if [[ "$already_processed" == "false" ]]; then
+                # Find the root of this process tree
+                local current_pid="$pid"
+                local root_pid="$pid"
+                local ancestors=()
+                
+                # Trace up to find root (but limit to prevent infinite loops)
+                for ((i=0; i<10; i++)); do
+                    local parent_pid; parent_pid=$(get_parent_pid "$current_pid")
+                    
+                    # If no parent or parent is init (PID 1) or launchd, we found the root
+                    if [[ -z "$parent_pid" || "$parent_pid" -eq 1 || "$parent_pid" -eq 0 ]]; then
+                        break
+                    fi
+                    
+                    # Check if parent has any connection to our port (this prevents going too high)
+                    if ! echo "$pids" | grep -q "$parent_pid"; then
+                        # Parent not related to this port, current is the root for our tree
+                        break
+                    fi
+                    
+                    ancestors+=("$current_pid")
+                    current_pid="$parent_pid"
+                    root_pid="$parent_pid"
+                done
+                
+                # Display tree starting from root
+                echo -e "${BOLD}Process Tree:${NC}"
+                build_process_tree "$root_pid" "" true 0 "$max_depth"
+                
+                # Mark all PIDs in this tree as processed
+                processed_pids+=("$root_pid")
+                processed_pids+=("${ancestors[@]}")
+                
+                # Add all descendants to processed list
+                local all_descendants; all_descendants=$(get_all_descendants "$root_pid" 0 "$max_depth")
+                if [[ -n "$all_descendants" ]]; then
+                    read -ra desc_array <<< "$all_descendants"
+                    processed_pids+=("${desc_array[@]}")
+                fi
+                
+                echo
+            fi
+        fi
+    done <<< "$pids"
+    
+    add_to_history "TREE" "Port: $port, Max depth: $max_depth"
+}
+
+# Get all descendants of a process (helper for marking processed PIDs)
+get_all_descendants() {
+    local pid="$1"
+    local level="${2:-0}"
+    local max_level="${3:-5}"
+    local descendants=()
+    
+    if [[ $level -gt $max_level ]]; then
+        return
+    fi
+    
+    local children; children=$(get_child_pids "$pid")
+    if [[ -n "$children" ]]; then
+        local child_array; read -ra child_array <<< "$children"
+        
+        for child_pid in "${child_array[@]}"; do
+            descendants+=("$child_pid")
+            
+            # Recursively get descendants
+            local child_descendants; child_descendants=$(get_all_descendants "$child_pid" $((level + 1)) "$max_level")
+            if [[ -n "$child_descendants" ]]; then
+                read -ra child_desc_array <<< "$child_descendants"
+                descendants+=("${child_desc_array[@]}")
+            fi
+        done
+    fi
+    
+    echo "${descendants[@]}"
 }
 
 # Check if process is protected
@@ -802,9 +999,10 @@ show_main_menu() {
     echo "  4) Bulk kill multiple ports"
     echo "  5) Monitor ports in real-time"
     echo "  6) Security scan"
-    echo "  7) View operation history"
-    echo "  8) Port usage analytics"
-    echo "  9) Export history data"
+    echo "  7) Show process tree for port"
+    echo "  8) View operation history"
+    echo "  9) Port usage analytics"
+    echo "  10) Export history data"
     echo "  0) Exit"
     echo
 }
@@ -813,7 +1011,7 @@ interactive_menu() {
     while true; do
         show_main_menu
         
-        echo -ne "${WHITE}Select an option (0-9): ${NC}"
+        echo -ne "${WHITE}Select an option (0-10): ${NC}"
         read -r choice
         
         case "$choice" in
@@ -869,16 +1067,28 @@ interactive_menu() {
                 read -r
                 ;;
             7)
-                show_port_history
+                echo -ne "${WHITE}Enter port number: ${NC}"
+                read -r port
+                if validate_port "$port"; then
+                    echo -ne "${WHITE}Max tree depth [5]: ${NC}"
+                    read -r depth
+                    depth="${depth:-5}"
+                    show_process_tree "$port" "$depth"
+                fi
                 echo -ne "${GRAY}Press Enter to continue...${NC}"
                 read -r
                 ;;
             8)
-                show_port_analytics
+                show_port_history
                 echo -ne "${GRAY}Press Enter to continue...${NC}"
                 read -r
                 ;;
             9)
+                show_port_analytics
+                echo -ne "${GRAY}Press Enter to continue...${NC}"
+                read -r
+                ;;
+            10)
                 echo -ne "${WHITE}Export format (csv/json/raw) [csv]: ${NC}"
                 read -r format
                 format="${format:-csv}"
@@ -913,6 +1123,7 @@ show_help() {
     echo "  list     [-d] <port>           List processes on port(s)"
     echo "  kill     [-f] [-n] <port>      Kill processes on port(s)"
     echo "  monitor  <ports>               Real-time monitoring"
+    echo "  tree     [--depth N] <port>    Show process tree hierarchy"
     echo "  scan     [--security]          Scan ports or security"
     echo "  history  [--csv] [--analytics] View port usage history & analytics"
     echo "  menu                           Interactive menu mode"
@@ -935,6 +1146,8 @@ show_help() {
     echo "  $0 -f 3000                    # Force kill processes on port 3000"
     echo "  $0 -i 8080                    # Interactive kill for port 8080"
     echo "  $0 list 3000                  # List processes on port 3000"
+    echo "  $0 tree 3000                  # Show process tree for port 3000"
+    echo "  $0 tree --depth 3 8080        # Show process tree with max depth 3"
     echo "  $0 monitor 3000 8080          # Monitor ports in real-time"
     echo "  $0 scan --security            # Security scan"
     echo "  $0 history                    # View port usage history"
@@ -998,6 +1211,33 @@ main() {
             -l|--list)
                 command="list"
                 shift
+                ;;
+            tree)
+                command="$1"
+                shift
+                # Process tree-specific options
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in
+                        --depth)
+                            shift
+                            if [[ $# -gt 0 && "$1" =~ ^[0-9]+$ ]]; then
+                                TREE_DEPTH="$1"
+                                shift
+                            else
+                                print_colored "$RED" "[!]" "--depth requires a numeric value"
+                                exit 1
+                            fi
+                            ;;
+                        --*)
+                            print_colored "$RED" "[!]" "Unknown tree option: $1"
+                            exit 1
+                            ;;
+                        *)
+                            break
+                            ;;
+                    esac
+                done
+                break
                 ;;
             list|kill|monitor|menu)
                 command="$1"
@@ -1111,6 +1351,22 @@ main() {
                 exit 1
             fi
             monitor_ports "${ports[@]}"
+            ;;
+        tree)
+            if [[ ${#ports[@]} -eq 0 ]]; then
+                print_colored "$RED" "[!]" "No port specified for process tree"
+                exit 1
+            fi
+            
+            # Process tree depth option
+            local tree_depth=5
+            if [[ -n "$TREE_DEPTH" ]]; then
+                tree_depth="$TREE_DEPTH"
+            fi
+            
+            for port in "${ports[@]}"; do
+                show_process_tree "$port" "$tree_depth"
+            done
             ;;
         scan)
             if [[ "$SECURITY_SCAN" == "true" ]]; then
