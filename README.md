@@ -153,17 +153,33 @@ sudo mv portkill /usr/local/bin/
 ```
 
 ### Package Managers (Community)
+
+#### Arch Linux (AUR)
 ```bash
-# Arch Linux (AUR)
+# Install from AUR
 yay -S portkill
+# or
+paru -S portkill
+```
 
-# Ubuntu/Debian (via .deb package)
-wget https://github.com/mr-tanta/portkill/releases/latest/download/portkill.deb
-sudo dpkg -i portkill.deb
+#### Ubuntu/Debian (.deb package)
+```bash
+# Download and install .deb package
+wget https://github.com/mr-tanta/portkill/releases/latest/download/portkill_2.3.0-1_all.deb
+sudo dpkg -i portkill_2.3.0-1_all.deb
 
-# RPM-based distributions
-wget https://github.com/mr-tanta/portkill/releases/latest/download/portkill.rpm
-sudo rpm -i portkill.rpm
+# Install dependencies if needed
+sudo apt-get install -f
+```
+
+#### RPM-based Distributions (RHEL/Fedora/SUSE)
+```bash
+# Download and install RPM package
+wget https://github.com/mr-tanta/portkill/releases/latest/download/portkill-2.3.0-1.noarch.rpm
+sudo rpm -i portkill-2.3.0-1.noarch.rpm
+
+# Or using dnf/yum
+sudo dnf install portkill-2.3.0-1.noarch.rpm
 ```
 
 ### System Requirements

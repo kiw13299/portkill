@@ -1,0 +1,163 @@
+name: 📦 Package Builder
+
+on:
+  release:
+    types: [published]
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-packages:
+    name: 📦 Build Distribution Packages
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: 🚀 Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: 📋 Extract Version
+      id: version
+      run: |
+        if [[ "${{ github.event_name }}" == "release" ]]; then
+          VERSION="${{ github.event.release.tag_name }}"
+        else
+          VERSION="${GITHUB_REF#refs/tags/}"
+        fi
+        VERSION=${VERSION#v}  # Remove 'v' prefix if present
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "tag=${VERSION}" >> $GITHUB_OUTPUT
+        
+    - name: 🏗️ Setup Build Environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          fakeroot \
+          dpkg-dev \
+          rpm \
+          createrepo-c \
+          alien \
+          lintian
+          
+    - name: 📦 Build Debian Package
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        
+        # Create package directory structure
+        mkdir -p portkill-deb/usr/bin
+        mkdir -p portkill-deb/etc/portkill
+        mkdir -p portkill-deb/usr/share/doc/portkill
+        
+        # Copy files
+        cp bin/portkill portkill-deb/usr/bin/portkill
+        cp portkill.conf portkill-deb/etc/portkill/portkill.conf
+        cp README.md CONTRIBUTING.md LICENSE portkill-deb/usr/share/doc/portkill/
+        cp install.sh uninstall.sh portkill-deb/usr/share/doc/portkill/
+        
+        # Copy control files
+        mkdir -p portkill-deb/DEBIAN
+        cp packaging/debian/DEBIAN/* portkill-deb/DEBIAN/
+        
+        # Update version in control file
+        sed -i "s/Version: .*/Version: ${VERSION}-1/" portkill-deb/DEBIAN/control
+        
+        # Set permissions
+        chmod 755 portkill-deb/usr/bin/portkill
+        chmod 755 portkill-deb/DEBIAN/postinst portkill-deb/DEBIAN/prerm
+        
+        # Build package
+        dpkg-deb --build portkill-deb portkill_${VERSION}-1_all.deb
+        
+        # Verify package
+        lintian portkill_${VERSION}-1_all.deb || true
+        
+    - name: 🔧 Build RPM Package
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        
+        # Setup RPM build environment
+        mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+        
+        # Create source tarball
+        mkdir -p portkill-${VERSION}
+        cp -r bin portkill.conf README.md CONTRIBUTING.md LICENSE install.sh uninstall.sh portkill-${VERSION}/
+        tar -czf ~/rpmbuild/SOURCES/portkill-${VERSION}.tar.gz portkill-${VERSION}
+        
+        # Copy and update spec file
+        cp packaging/rpm/portkill.spec ~/rpmbuild/SPECS/
+        sed -i "s/Version: .*/Version: ${VERSION}/" ~/rpmbuild/SPECS/portkill.spec
+        
+        # Build RPM
+        rpmbuild -ba ~/rpmbuild/SPECS/portkill.spec
+        
+        # Copy built RPM
+        cp ~/rpmbuild/RPMS/noarch/portkill-${VERSION}-1.*.rpm ./portkill-${VERSION}-1.noarch.rpm
+        
+    - name: 📋 Create Package Checksums
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        
+        # Generate checksums
+        sha256sum portkill_${VERSION}-1_all.deb > portkill_${VERSION}-1_all.deb.sha256
+        sha256sum portkill-${VERSION}-1.noarch.rpm > portkill-${VERSION}-1.noarch.rpm.sha256
+        
+        # Create checksums file
+        cat > checksums.txt << EOF
+        # PortKill v${VERSION} Package Checksums
+        
+        ## Debian Package
+        $(cat portkill_${VERSION}-1_all.deb.sha256)
+        
+        ## RPM Package  
+        $(cat portkill-${VERSION}-1.noarch.rpm.sha256)
+        EOF
+        
+    - name: 📤 Upload Packages as Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: portkill-packages-${{ steps.version.outputs.version }}
+        path: |
+          *.deb
+          *.rpm
+          *.sha256
+          checksums.txt
+          
+    - name: 🚀 Upload to Release
+      if: github.event_name == 'release'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          *.deb
+          *.rpm
+          *.sha256
+          checksums.txt
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: 📊 Package Build Summary
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        echo "## 📦 Package Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Version:** ${VERSION}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Built Packages:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Debian:** portkill_${VERSION}-1_all.deb ($(du -h portkill_${VERSION}-1_all.deb | cut -f1))" >> $GITHUB_STEP_SUMMARY
+        echo "- **RPM:** portkill-${VERSION}-1.noarch.rpm ($(du -h portkill-${VERSION}-1.noarch.rpm | cut -f1))" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Installation Commands:" >> $GITHUB_STEP_SUMMARY
+        echo '```bash' >> $GITHUB_STEP_SUMMARY
+        echo "# Debian/Ubuntu" >> $GITHUB_STEP_SUMMARY
+        echo "wget https://github.com/mr-tanta/portkill/releases/latest/download/portkill_${VERSION}-1_all.deb" >> $GITHUB_STEP_SUMMARY
+        echo "sudo dpkg -i portkill_${VERSION}-1_all.deb" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "# RPM-based (RHEL/Fedora/SUSE)" >> $GITHUB_STEP_SUMMARY
+        echo "wget https://github.com/mr-tanta/portkill/releases/latest/download/portkill-${VERSION}-1.noarch.rpm" >> $GITHUB_STEP_SUMMARY
+        echo "sudo rpm -i portkill-${VERSION}-1.noarch.rpm" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY

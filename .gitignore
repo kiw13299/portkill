@@ -35,3 +35,11 @@ config.local
 # Documentation build
 docs/_build/
 docs/.doctrees/
+# Package build artifacts
+build/
+*.deb
+*.rpm
+*.tar.gz
+rpmbuild/
+*.sha256
+checksums.txt
