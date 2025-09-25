@@ -39,7 +39,7 @@ get_version() {
     elif git describe --tags HEAD 2>/dev/null; then
         git describe --tags HEAD | sed 's/^v//' | sed 's/-.*$//'
     else
-        echo "2.3.0"
+        echo "2.3.1"
     fi
 }
 

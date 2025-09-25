@@ -1,5 +1,5 @@
 Name:           portkill
-Version:        2.3.0
+Version:        2.3.1
 Release:        1%{?dist}
 Summary:        Advanced port management and network analysis tool
 License:        MIT
