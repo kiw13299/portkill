@@ -1,125 +1,147 @@
-name: Release Pipeline
+name: 🚀 Robust Release Pipeline
 
+# STRICT TRIGGERS - Only tags and manual dispatch
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]+.[0-9]+.[0-9]+'  # More specific regex: v1.0.0, v2.1.3, etc.
+    branches-ignore:
+      - '**'  # Explicitly ignore all branches
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., v2.2.1)'
+        description: 'Release version (e.g., v2.2.1)'
         required: true
+        type: string
         default: 'v2.2.1'
+      dry_run:
+        description: 'Dry run (test without creating release)'
+        required: false
+        type: boolean
+        default: false
+      skip_homebrew:
+        description: 'Skip Homebrew formula update'
+        required: false
+        type: boolean
+        default: false
 
+# Global environment variables
 env:
   SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
 
+# Explicit permissions
 permissions:
-  contents: write
-  actions: read
-  deployments: write
+  contents: write    # Create releases and tags
+  actions: read      # Read workflow status
+  packages: read     # Read packages
+  deployments: write # Create deployments
 
 jobs:
-  validate-release:
-    name: Validate Release
+  # =============================================================================
+  # JOB 1: PREFLIGHT VALIDATION
+  # =============================================================================
+  preflight:
+    name: 🔍 Preflight Validation
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       version: ${{ steps.version.outputs.version }}
       version_number: ${{ steps.version.outputs.version_number }}
+      is_valid: ${{ steps.validation.outputs.is_valid }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+    
     steps:
-      - name: Checkout code
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ env.GITHUB_TOKEN }}
 
-      - name: Extract version
+      - name: 🔢 Extract and Validate Version
         id: version
         run: |
+          # Determine version source
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             VERSION="${{ github.event.inputs.version }}"
-          else
+            echo "📋 Version from manual input: $VERSION"
+          elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref_type }}" == "tag" ]]; then
             VERSION="${{ github.ref_name }}"
+            echo "🏷️ Version from tag: $VERSION"
+          else
+            echo "❌ ERROR: Invalid trigger event"
+            echo "Event: ${{ github.event_name }}"
+            echo "Ref type: ${{ github.ref_type }}"
+            exit 1
           fi
+          
+          # Validate version format
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ ERROR: Invalid version format '$VERSION'"
+            echo "Expected format: vX.Y.Z (e.g., v2.1.0)"
+            exit 1
+          fi
+          
+          # Extract version number (remove 'v' prefix)
           VERSION_NUMBER="${VERSION#v}"
+          
+          # Output results
           {
             echo "version=$VERSION"
             echo "version_number=$VERSION_NUMBER"
           } >> "$GITHUB_OUTPUT"
-          echo "Releasing version: $VERSION"
+          
+          echo "✅ Version validation passed: $VERSION ($VERSION_NUMBER)"
 
-      - name: Validate version format
-        run: |
-          VERSION="${{ steps.version.outputs.version_number }}"
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Invalid version format: $VERSION"
-            echo "Expected format: X.Y.Z (e.g., 2.1.0)"
-            exit 1
-          fi
-
-      - name: Check if version exists
+      - name: 🏷️ Check Tag Existence
+        id: tag_check
         run: |
           VERSION="${{ steps.version.outputs.version }}"
+          
+          echo "🔍 Checking if tag $VERSION already exists..."
           if git tag -l | grep -q "^$VERSION$"; then
-            echo "::error::Version $VERSION already exists"
-            exit 1
+            if [[ "${{ github.event.inputs.dry_run }}" == "true" ]]; then
+              echo "⚠️ WARNING: Tag $VERSION exists, but dry run mode enabled"
+              echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "❌ ERROR: Tag $VERSION already exists"
+              echo "Available tags:"
+              git tag -l | tail -5
+              exit 1
+            fi
+          else
+            echo "✅ Tag $VERSION does not exist - proceeding"
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Update version in script
-        run: |
-          VERSION_NUMBER="${{ steps.version.outputs.version_number }}"
-          sed -i "s/VERSION=\"[^\"]*\"/VERSION=\"$VERSION_NUMBER\"/" bin/portkill
-          sed -i "s/readonly VERSION=\"[^\"]*\"/readonly VERSION=\"$VERSION_NUMBER\"/" bin/portkill
-          
-          # Verify the change
-          grep "VERSION=" bin/portkill || exit 1
-          echo "✅ Version updated in script"
-
-      - name: Run tests
-        run: |
-          chmod +x tests/test_portkill.sh
-          ./tests/test_portkill.sh
-
-  create-release:
-    name: Create GitHub Release
-    needs: validate-release
-    runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-      release_id: ${{ steps.create_release.outputs.id }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Update version in files
-        run: |
-          VERSION_NUMBER="${{ needs.validate-release.outputs.version_number }}"
-          sed -i "s/VERSION=\"[^\"]*\"/VERSION=\"$VERSION_NUMBER\"/" bin/portkill install.sh uninstall.sh
-          sed -i "s/readonly VERSION=\"[^\"]*\"/readonly VERSION=\"$VERSION_NUMBER\"/" bin/portkill
-
-      - name: Generate changelog
+      - name: 📝 Generate Changelog
         id: changelog
         run: |
-          VERSION="${{ needs.validate-release.outputs.version }}"
+          VERSION="${{ steps.version.outputs.version }}"
           
-          # Get commits since last tag
-          LAST_TAG=$(git tag --sort=-version:refname | head -1)
+          echo "📝 Generating changelog for $VERSION..."
+          
+          # Get the latest existing tag
+          LAST_TAG=$(git tag --sort=-version:refname | head -1 2>/dev/null || echo "")
+          
           if [[ -n "$LAST_TAG" && "$LAST_TAG" != "$VERSION" ]]; then
-            COMMITS=$(git log --pretty=format:"- %s" $LAST_TAG..HEAD)
+            echo "📋 Changes since $LAST_TAG:"
+            COMMITS=$(git log --pretty=format:"- %s" "$LAST_TAG..HEAD" 2>/dev/null || echo "- Initial release")
           else
-            COMMITS=$(git log --pretty=format:"- %s" | head -10)
+            echo "📋 Recent commits:"
+            COMMITS=$(git log --pretty=format:"- %s" --max-count=10 2>/dev/null || echo "- Initial release")
           fi
           
-          # Create changelog
+          # Create comprehensive changelog
           cat > CHANGELOG.md << EOF
-          # Release $VERSION
+          # 🚀 Release $VERSION
           
-          ## What's New
+          ## ✨ What's New
           
           $COMMITS
           
-          ## Installation
+          ## 📦 Installation
           
           ### Homebrew (Recommended)
           \`\`\`bash
@@ -132,240 +154,480 @@ jobs:
           curl -sSL https://raw.githubusercontent.com/mr-tanta/portkill/main/install.sh | bash
           \`\`\`
           
-          ## Usage
+          ## 🔧 Usage Examples
           
           \`\`\`bash
           # Kill processes on port 3000
           portkill 3000
           
-          # Show process tree for port 3000
-          portkill tree 3000
-          
-          # Kill processes on multiple ports
-          portkill 3000 8080 9000
+          # Show process tree for port 8080
+          portkill tree 8080 --depth 3
           
           # Interactive mode
           portkill menu
+          
+          # Monitor ports in real-time
+          portkill monitor 3000 8080
           \`\`\`
+          
+          ## 📊 New in This Version
+          
+          - Enhanced Process Tree Visualization
+          - Improved error handling and validation
+          - Better cross-platform compatibility
+          - Comprehensive logging and analytics
+          
+          ---
+          
+          **Full Documentation:** https://github.com/mr-tanta/portkill
+          **Report Issues:** https://github.com/mr-tanta/portkill/issues
           EOF
           
+          # Output changelog for use in later jobs
           {
-            echo "changelog<<EOF"
+            echo "changelog<<CHANGELOG_EOF"
             cat CHANGELOG.md
-            echo "EOF"
+            echo "CHANGELOG_EOF"
           } >> "$GITHUB_OUTPUT"
+          
+          echo "✅ Changelog generated successfully"
 
-      - name: Create release packages
+      - name: 🧪 Run Comprehensive Tests
+        id: tests
         run: |
-          VERSION="${{ needs.validate-release.outputs.version }}"
+          echo "🧪 Running comprehensive test suite..."
+          
+          # Update version in script for testing
+          VERSION_NUMBER="${{ steps.version.outputs.version_number }}"
+          sed -i "s/readonly VERSION=\"[^\"]*\"/readonly VERSION=\"$VERSION_NUMBER\"/" bin/portkill
+          
+          # Validate script syntax
+          echo "🔍 Validating script syntax..."
+          if ! bash -n bin/portkill; then
+            echo "❌ Script syntax validation failed"
+            exit 1
+          fi
+          
+          # Test basic functionality
+          echo "🔧 Testing basic functionality..."
+          chmod +x bin/portkill
+          
+          if ! ./bin/portkill --version; then
+            echo "❌ Version command failed"
+            exit 1
+          fi
+          
+          if ! ./bin/portkill --help >/dev/null; then
+            echo "❌ Help command failed"
+            exit 1
+          fi
+          
+          # Run full test suite if available
+          if [[ -f "tests/test_portkill.sh" ]]; then
+            echo "🧪 Running full test suite..."
+            chmod +x tests/test_portkill.sh
+            if ! ./tests/test_portkill.sh; then
+              echo "❌ Test suite failed"
+              exit 1
+            fi
+          else
+            echo "⚠️ No test suite found, skipping detailed tests"
+          fi
+          
+          echo "✅ All tests passed"
+
+      - name: ✅ Final Validation
+        id: validation
+        run: |
+          echo "✅ Preflight validation completed successfully"
+          echo "is_valid=true" >> "$GITHUB_OUTPUT"
+          
+          # Summary
+          echo "📋 Release Summary:"
+          echo "  Version: ${{ steps.version.outputs.version }}"
+          echo "  Trigger: ${{ github.event_name }}"
+          echo "  Dry Run: ${{ github.event.inputs.dry_run || 'false' }}"
+          echo "  Tag Exists: ${{ steps.tag_check.outputs.tag_exists }}"
+
+  # =============================================================================
+  # JOB 2: BUILD AND PACKAGE
+  # =============================================================================
+  build:
+    name: 📦 Build & Package
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: needs.preflight.outputs.is_valid == 'true'
+    outputs:
+      artifacts_ready: ${{ steps.package.outputs.artifacts_ready }}
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔄 Update Version in Files
+        run: |
+          VERSION_NUMBER="${{ needs.preflight.outputs.version_number }}"
+          
+          echo "🔄 Updating version to $VERSION_NUMBER in all files..."
+          
+          # Update main script
+          sed -i "s/readonly VERSION=\"[^\"]*\"/readonly VERSION=\"$VERSION_NUMBER\"/" bin/portkill
+          
+          # Update installer scripts
+          sed -i "s/VERSION=\"[^\"]*\"/VERSION=\"$VERSION_NUMBER\"/" install.sh uninstall.sh
+          
+          # Verify changes
+          echo "✅ Version updated in files:"
+          grep -n "VERSION=" bin/portkill install.sh uninstall.sh || true
+
+      - name: 📦 Create Release Packages
+        id: package
+        run: |
+          VERSION="${{ needs.preflight.outputs.version }}"
+          VERSION_NUMBER="${{ needs.preflight.outputs.version_number }}"
+          
+          echo "📦 Creating release packages for $VERSION..."
+          
+          # Create distribution directory
           mkdir -p dist
           
-          # Create source tarball
-          tar --exclude='.git*' --exclude='dist' --exclude='.idea' \
+          # Package 1: Complete source archive
+          echo "📄 Creating source archive..."
+          tar --exclude='.git*' \
+              --exclude='dist' \
+              --exclude='.idea' \
+              --exclude='*.tmp' \
+              --exclude='node_modules' \
               -czf "dist/portkill-$VERSION.tar.gz" \
               .
           
-          # Create install script package
+          # Package 2: Installation package
+          echo "💾 Creating installer package..."
           mkdir -p "dist/portkill-$VERSION-installer"
-          cp install.sh uninstall.sh README.md LICENSE "dist/portkill-$VERSION-installer/"
+          cp bin/portkill install.sh uninstall.sh README.md LICENSE \
+             "dist/portkill-$VERSION-installer/"
+          
           tar -czf "dist/portkill-$VERSION-installer.tar.gz" \
               -C dist "portkill-$VERSION-installer"
           
-          # Create checksums
+          # Package 3: Binary standalone (macOS/Linux compatible)
+          echo "🔧 Creating standalone binary package..."
+          mkdir -p "dist/portkill-$VERSION-binary"
+          cp bin/portkill README.md LICENSE "dist/portkill-$VERSION-binary/"
+          chmod +x "dist/portkill-$VERSION-binary/portkill"
+          
+          tar -czf "dist/portkill-$VERSION-binary.tar.gz" \
+              -C dist "portkill-$VERSION-binary"
+          
+          # Generate checksums
+          echo "🔐 Generating checksums..."
           cd dist
           sha256sum *.tar.gz > checksums.txt
+          sha256sum *.tar.gz > SHA256SUMS  # Alternative format
           
-          echo "📦 Created release packages:"
-          ls -la *.tar.gz
+          # Generate package info
+          cat > package-info.json << EOF
+          {
+            "version": "$VERSION",
+            "version_number": "$VERSION_NUMBER",
+            "release_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "packages": {
+              "source": "portkill-$VERSION.tar.gz",
+              "installer": "portkill-$VERSION-installer.tar.gz",
+              "binary": "portkill-$VERSION-binary.tar.gz"
+            },
+            "checksums": "checksums.txt"
+          }
+          EOF
+          
+          # Display results
+          echo "📦 Package creation completed:"
+          ls -la *.tar.gz *.txt *.json
+          echo
+          echo "📊 Package sizes:"
+          du -h *.tar.gz
+          
+          echo "artifacts_ready=true" >> "$GITHUB_OUTPUT"
 
-      - name: Create GitHub Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: 💾 Upload Build Artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ needs.validate-release.outputs.version }}
-          release_name: PortKill ${{ needs.validate-release.outputs.version }}
-          body: ${{ steps.changelog.outputs.changelog }}
+          name: release-packages-${{ needs.preflight.outputs.version }}
+          path: dist/
+          retention-days: 30
+          compression-level: 9
+
+  # =============================================================================
+  # JOB 3: CREATE GITHUB RELEASE
+  # =============================================================================
+  release:
+    name: 🎉 Create GitHub Release
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: needs.build.outputs.artifacts_ready == 'true' && github.event.inputs.dry_run != 'true'
+    outputs:
+      release_id: ${{ steps.create_release.outputs.id }}
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      release_url: ${{ steps.create_release.outputs.html_url }}
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 💾 Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-packages-${{ needs.preflight.outputs.version }}
+          path: dist/
+
+      - name: 🎉 Create GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.preflight.outputs.version }}
+          name: "PortKill ${{ needs.preflight.outputs.version }}"
+          body: ${{ needs.preflight.outputs.changelog }}
           draft: false
           prerelease: false
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
+            dist/SHA256SUMS
+            dist/package-info.json
 
-      - name: Upload source package
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: dist/portkill-${{ needs.validate-release.outputs.version }}.tar.gz
-          asset_name: portkill-${{ needs.validate-release.outputs.version }}.tar.gz
-          asset_content_type: application/gzip
+      - name: 📋 Release Summary
+        run: |
+          echo "🎉 GitHub Release Created Successfully!"
+          echo "📦 Release URL: ${{ steps.create_release.outputs.html_url }}"
+          echo "🏷️ Tag: ${{ needs.preflight.outputs.version }}"
+          echo "📄 Assets uploaded:"
+          ls -la dist/*.tar.gz dist/*.txt dist/*.json
 
-      - name: Upload installer package
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: dist/portkill-${{ needs.validate-release.outputs.version }}-installer.tar.gz
-          asset_name: portkill-${{ needs.validate-release.outputs.version }}-installer.tar.gz
-          asset_content_type: application/gzip
-
-      - name: Upload checksums
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: dist/checksums.txt
-          asset_name: checksums.txt
-          asset_content_type: text/plain
-
-  update-homebrew:
-    name: Update Homebrew Formula
-    needs: [validate-release, create-release]
+  # =============================================================================
+  # JOB 4: UPDATE HOMEBREW (OPTIONAL)
+  # =============================================================================
+  homebrew:
+    name: 🍺 Update Homebrew Formula
+    needs: [preflight, release]
     runs-on: ubuntu-latest
-    # Only run if PAT_TOKEN is available for cross-repo access
-    if: vars.HOMEBREW_UPDATE_ENABLED == 'true' && secrets.PAT_TOKEN != ''
+    timeout-minutes: 10
+    if: >
+      needs.release.outputs.release_id != '' && 
+      github.event.inputs.skip_homebrew != 'true' &&
+      secrets.PAT_TOKEN != ''
+    continue-on-error: true  # Don't fail release if Homebrew update fails
+    
     steps:
-      - name: Checkout homebrew tap
+      - name: 📥 Checkout Homebrew Tap
         uses: actions/checkout@v4
         with:
           repository: mr-tanta/homebrew-portkill
-          token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ env.PAT_TOKEN }}
           path: homebrew-tap
 
-      - name: Calculate new SHA256
+      - name: 🔢 Calculate SHA256
         id: sha256
         run: |
-          VERSION="${{ needs.validate-release.outputs.version }}"
+          VERSION="${{ needs.preflight.outputs.version }}"
           URL="https://github.com/mr-tanta/portkill/archive/$VERSION.tar.gz"
           
-          echo "Downloading $URL to calculate SHA256..."
+          echo "🔐 Calculating SHA256 for $URL..."
           SHA256=$(curl -sSL "$URL" | sha256sum | cut -d' ' -f1)
+          
           echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
-          echo "Calculated SHA256: $SHA256"
+          echo "✅ SHA256: $SHA256"
 
-      - name: Update Homebrew formula
+      - name: 🔄 Update Formula
         run: |
           cd homebrew-tap
-          VERSION="${{ needs.validate-release.outputs.version }}"
-          VERSION_NUMBER="${{ needs.validate-release.outputs.version_number }}"
+          VERSION="${{ needs.preflight.outputs.version }}"
+          VERSION_NUMBER="${{ needs.preflight.outputs.version_number }}"
           SHA256="${{ steps.sha256.outputs.sha256 }}"
           
-          # Update formula
-          sed -i "s/version \"[^\"]*\"/version \"$VERSION_NUMBER\"/" Formula/portkill.rb
-          sed -i "s/sha256 \"[^\"]*\"/sha256 \"$SHA256\"/" Formula/portkill.rb
-          sed -i "s|archive/[^/]*.tar.gz|archive/$VERSION.tar.gz|" Formula/portkill.rb
+          echo "🔄 Updating Homebrew formula..."
           
-          echo "✅ Updated Homebrew formula"
-          git diff
+          # Update the formula file
+          if [[ -f "Formula/portkill.rb" ]]; then
+            sed -i "s/version \"[^\"]*\"/version \"$VERSION_NUMBER\"/" Formula/portkill.rb
+            sed -i "s/sha256 \"[^\"]*\"/sha256 \"$SHA256\"/" Formula/portkill.rb
+            sed -i "s|archive/[^/]*.tar.gz|archive/$VERSION.tar.gz|" Formula/portkill.rb
+            
+            echo "✅ Formula updated successfully"
+            git diff Formula/portkill.rb
+          else
+            echo "⚠️ Formula file not found, skipping Homebrew update"
+            exit 0
+          fi
 
-      - name: Commit and push formula update
+      - name: 🚀 Commit and Push Formula
         run: |
           cd homebrew-tap
-          VERSION="${{ needs.validate-release.outputs.version }}"
+          VERSION="${{ needs.preflight.outputs.version }}"
+          VERSION_NUMBER="${{ needs.preflight.outputs.version_number }}"
           
+          # Configure git
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
+          # Commit changes
           git add Formula/portkill.rb
-          git commit -m "chore: update portkill to $VERSION
+          if git diff --staged --quiet; then
+            echo "ℹ️ No changes to commit"
+          else
+            git commit -m "🚀 Update portkill to $VERSION
 
-          - Update version to ${{ needs.validate-release.outputs.version_number }}
-          - Update SHA256 checksum
-          - Automated update from release workflow"
-          
-          git push origin main
+          - Update version to $VERSION_NUMBER
+          - Update SHA256 checksum: ${{ steps.sha256.outputs.sha256 }}
+          - Automated update from release workflow
+          - Release: https://github.com/mr-tanta/portkill/releases/tag/$VERSION"
+            
+            git push origin main
+            echo "✅ Homebrew formula updated successfully"
+          fi
 
+  # =============================================================================
+  # JOB 5: NOTIFICATIONS & CLEANUP
+  # =============================================================================
   notify:
-    name: Release Notifications
-    needs: [validate-release, create-release, update-homebrew]
+    name: 📢 Notifications & Cleanup
+    needs: [preflight, build, release, homebrew]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: always()
+    
     steps:
-      - name: Notify Slack on Success
-        if: needs.create-release.result == 'success' && (needs.update-homebrew.result == 'success' || needs.update-homebrew.result == 'skipped')
+      - name: 📊 Determine Overall Status
+        id: status
         run: |
-          VERSION="${{ needs.validate-release.outputs.version }}"
-          if [ -n "$SLACK_WEBHOOK_URL" ]; then
-            curl -X POST -H 'Content-type: application/json' \
-              --data '{
-                "text": "🎉 PortKill Release '"$VERSION"' Published!",
-                "attachments": [{
-                  "color": "good",
-                  "title": "Release Successful",
-                  "title_link": "https://github.com/mr-tanta/portkill/releases/tag/'"$VERSION"'",
-                  "fields": [
-                    {
-                      "title": "Version",
-                      "value": "'"$VERSION"'",
-                      "short": true
-                    },
-                    {
-                      "title": "Environment",
-                      "value": "Production",
-                      "short": true
-                    },
-                    {
-                      "title": "Installation (Homebrew)",
-                      "value": "```brew tap mr-tanta/portkill && brew install portkill```",
-                      "short": false
-                    },
-                    {
-                      "title": "Installation (Manual)",
-                      "value": "```curl -sSL https://raw.githubusercontent.com/mr-tanta/portkill/main/install.sh | bash```",
-                      "short": false
-                    },
-                    {
-                      "title": "Status",
-                      "value": "• ✅ GitHub Release Created\n• ✅ Homebrew Formula Updated\n• ✅ Distribution Packages Ready",
-                      "short": false
-                    }
-                  ],
-                  "footer": "PortKill Release Pipeline",
-                  "ts": '$(date +%s)'
-                }]
-              }' \
-              "$SLACK_WEBHOOK_URL"
+          # Determine overall result
+          PREFLIGHT="${{ needs.preflight.result }}"
+          BUILD="${{ needs.build.result }}"
+          RELEASE="${{ needs.release.result }}"
+          HOMEBREW="${{ needs.homebrew.result }}"
+          
+          echo "📊 Job Results:"
+          echo "  Preflight: $PREFLIGHT"
+          echo "  Build: $BUILD"
+          echo "  Release: $RELEASE"
+          echo "  Homebrew: $HOMEBREW"
+          
+          # Determine overall status
+          if [[ "$PREFLIGHT" == "success" && "$BUILD" == "success" ]]; then
+            if [[ "${{ github.event.inputs.dry_run }}" == "true" ]]; then
+              echo "status=dry_run_success" >> "$GITHUB_OUTPUT"
+              echo "message=🧪 Dry run completed successfully" >> "$GITHUB_OUTPUT"
+            elif [[ "$RELEASE" == "success" ]]; then
+              if [[ "$HOMEBREW" == "success" ]]; then
+                echo "status=full_success" >> "$GITHUB_OUTPUT"
+                echo "message=🎉 Release completed successfully with Homebrew update" >> "$GITHUB_OUTPUT"
+              else
+                echo "status=partial_success" >> "$GITHUB_OUTPUT"
+                echo "message=🎉 Release completed successfully (Homebrew update failed/skipped)" >> "$GITHUB_OUTPUT"
+              fi
+            else
+              echo "status=release_failed" >> "$GITHUB_OUTPUT"
+              echo "message=❌ Release creation failed" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "status=build_failed" >> "$GITHUB_OUTPUT"
+            echo "message=❌ Build or preflight validation failed" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Notify Slack on Failure
-        if: needs.create-release.result == 'failure' || needs.update-homebrew.result == 'failure'
+      - name: 🎉 Success Notification
+        if: contains(steps.status.outputs.status, 'success')
         run: |
-          VERSION="${{ needs.validate-release.outputs.version }}"
-          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+          VERSION="${{ needs.preflight.outputs.version || 'Unknown' }}"
+          RELEASE_URL="${{ needs.release.outputs.release_url || 'N/A' }}"
+          MESSAGE="${{ steps.status.outputs.message }}"
+          
+          echo "$MESSAGE"
+          echo "🏷️ Version: $VERSION"
+          echo "🔗 Release URL: $RELEASE_URL"
+          
+          # Send Slack notification if webhook is available
+          if [[ -n "$SLACK_WEBHOOK_URL" ]]; then
             curl -X POST -H 'Content-type: application/json' \
-              --data '{
-                "text": "❌ PortKill Release Failed!",
-                "attachments": [{
-                  "color": "danger",
-                  "title": "Release Pipeline Failure",
-                  "title_link": "https://github.com/mr-tanta/portkill/actions/runs/${{ github.run_id }}",
-                  "fields": [
+              --data "{
+                \"text\": \"$MESSAGE\",
+                \"attachments\": [{
+                  \"color\": \"good\",
+                  \"title\": \"PortKill Release $VERSION\",
+                  \"title_link\": \"$RELEASE_URL\",
+                  \"fields\": [
                     {
-                      "title": "Version",
-                      "value": "'"$VERSION"'",
-                      "short": true
+                      \"title\": \"Version\",
+                      \"value\": \"$VERSION\",
+                      \"short\": true
                     },
                     {
-                      "title": "Failed Stage",
-                      "value": "Release Creation: ${{ needs.create-release.result }}\nHomebrew Update: ${{ needs.update-homebrew.result }}",
-                      "short": true
+                      \"title\": \"Status\",
+                      \"value\": \"${{ steps.status.outputs.status }}\",
+                      \"short\": true
                     },
                     {
-                      "title": "Action Required",
-                      "value": "1. Check GitHub Actions logs\n2. Resolve pipeline issues\n3. Re-run failed jobs\n4. Manual Homebrew update may be needed",
-                      "short": false
-                    },
-                    {
-                      "title": "Troubleshooting",
-                      "value": "<https://github.com/mr-tanta/portkill/actions/runs/${{ github.run_id }}|View Detailed Logs>",
-                      "short": false
+                      \"title\": \"Installation\",
+                      \"value\": \"\`\`\`brew install mr-tanta/portkill/portkill\`\`\`\",
+                      \"short\": false
                     }
-                  ],
-                  "footer": "PortKill Release Pipeline • Requires Attention",
-                  "ts": '$(date +%s)'
+                  ]
                 }]
-              }' \
-              "$SLACK_WEBHOOK_URL"
+              }" \
+              "$SLACK_WEBHOOK_URL" || echo "⚠️ Slack notification failed"
           fi
+
+      - name: ❌ Failure Notification
+        if: contains(steps.status.outputs.status, 'failed')
+        run: |
+          VERSION="${{ needs.preflight.outputs.version || 'Unknown' }}"
+          MESSAGE="${{ steps.status.outputs.message }}"
+          
+          echo "$MESSAGE"
+          echo "🏷️ Version: $VERSION"
+          echo "🔗 Workflow: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          
+          # Send failure notification to Slack
+          if [[ -n "$SLACK_WEBHOOK_URL" ]]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data "{
+                \"text\": \"❌ PortKill Release Failed\",
+                \"attachments\": [{
+                  \"color\": \"danger\",
+                  \"title\": \"Release Pipeline Failure\",
+                  \"title_link\": \"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\",
+                  \"fields\": [
+                    {
+                      \"title\": \"Version\",
+                      \"value\": \"$VERSION\",
+                      \"short\": true
+                    },
+                    {
+                      \"title\": \"Error\",
+                      \"value\": \"$MESSAGE\",
+                      \"short\": true
+                    },
+                    {
+                      \"title\": \"Action Required\",
+                      \"value\": \"Check workflow logs and retry\",
+                      \"short\": false
+                    }
+                  ]
+                }]
+              }" \
+              "$SLACK_WEBHOOK_URL" || echo "⚠️ Slack notification failed"
+          fi
+
+      - name: 📋 Final Summary
+        run: |
+          echo "================================="
+          echo "🚀 PORTKILL RELEASE PIPELINE COMPLETE"
+          echo "================================="
+          echo "📊 Overall Status: ${{ steps.status.outputs.status }}"
+          echo "💬 Message: ${{ steps.status.outputs.message }}"
+          echo "🕐 Duration: ${{ github.event.created_at }} - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "🔗 Workflow: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "================================="
