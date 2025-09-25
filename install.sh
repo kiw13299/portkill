@@ -54,7 +54,7 @@ check_dependencies() {
 }
 
 download_portkill() {
-    local temp_dir=$(mktemp -d)
+    local temp_dir; temp_dir=$(mktemp -d)
     local script_url="$REPO_URL/raw/main/bin/portkill"
     
     print_colored "$BLUE" "Downloading PortKill from GitHub..."
@@ -108,7 +108,7 @@ install_portkill() {
 
 verify_installation() {
     if command -v "$SCRIPT_NAME" &> /dev/null; then
-        local installed_version=$($SCRIPT_NAME --version 2>/dev/null | head -1 | awk '{print $2}')
+        local installed_version; installed_version=$($SCRIPT_NAME --version 2>/dev/null | head -1 | awk '{print $2}')
         print_colored "$GREEN" "PortKill v$installed_version installed successfully!"
         echo
         print_colored "$BLUE" "Usage:"

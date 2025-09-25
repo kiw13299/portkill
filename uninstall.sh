@@ -6,7 +6,7 @@
 set -e
 
 VERSION="2.0.0"
-INSTALL_DIR="/usr/local/bin"
+# INSTALL_DIR="/usr/local/bin" # Unused - disabled to avoid ShellCheck warning
 SCRIPT_NAME="portkill"
 
 # Color definitions
@@ -35,7 +35,7 @@ check_installation() {
         exit 0
     fi
     
-    local install_path=$(which "$SCRIPT_NAME" 2>/dev/null)
+    local install_path; install_path=$(which "$SCRIPT_NAME" 2>/dev/null)
     if [[ -z "$install_path" ]]; then
         print_colored "$YELLOW" "PortKill installation not found"
         exit 0

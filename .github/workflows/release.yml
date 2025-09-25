@@ -278,7 +278,43 @@ jobs:
           VERSION="${{ needs.validate-release.outputs.version }}"
           if [ -n "$SLACK_WEBHOOK_URL" ]; then
             curl -X POST -H 'Content-type: application/json' \
-              --data "{\"text\":\"🚀 PortKill $VERSION Released Successfully!\n• GitHub Release: https://github.com/mr-tanta/portkill/releases/tag/$VERSION\n• Homebrew formula updated\n• Ready for installation: \`brew install mr-tanta/portkill/portkill\`\"}" \
+              --data '{
+                "text": "🎉 PortKill Release '$VERSION' Published!",
+                "attachments": [{
+                  "color": "good",
+                  "title": "Release Successful",
+                  "title_link": "https://github.com/mr-tanta/portkill/releases/tag/'$VERSION'",
+                  "fields": [
+                    {
+                      "title": "Version",
+                      "value": "'$VERSION'",
+                      "short": true
+                    },
+                    {
+                      "title": "Environment",
+                      "value": "Production",
+                      "short": true
+                    },
+                    {
+                      "title": "Installation (Homebrew)",
+                      "value": "```brew tap mr-tanta/portkill && brew install portkill```",
+                      "short": false
+                    },
+                    {
+                      "title": "Installation (Manual)",
+                      "value": "```curl -sSL https://raw.githubusercontent.com/mr-tanta/portkill/main/install.sh | bash```",
+                      "short": false
+                    },
+                    {
+                      "title": "Status",
+                      "value": "• ✅ GitHub Release Created\n• ✅ Homebrew Formula Updated\n• ✅ Distribution Packages Ready",
+                      "short": false
+                    }
+                  ],
+                  "footer": "PortKill Release Pipeline",
+                  "ts": '$(date +%s)'
+                }]
+              }' \
               "$SLACK_WEBHOOK_URL"
           fi
 
@@ -288,6 +324,37 @@ jobs:
           VERSION="${{ needs.validate-release.outputs.version }}"
           if [ -n "$SLACK_WEBHOOK_URL" ]; then
             curl -X POST -H 'Content-type: application/json' \
-              --data "{\"text\":\"❌ PortKill $VERSION Release FAILED\n• Check GitHub Actions for details\n• Manual intervention may be required\"}" \
+              --data '{
+                "text": "❌ PortKill Release Failed!",
+                "attachments": [{
+                  "color": "danger",
+                  "title": "Release Pipeline Failure",
+                  "title_link": "https://github.com/mr-tanta/portkill/actions/runs/${{ github.run_id }}",
+                  "fields": [
+                    {
+                      "title": "Version",
+                      "value": "'$VERSION'",
+                      "short": true
+                    },
+                    {
+                      "title": "Failed Stage",
+                      "value": "Release Creation: ${{ needs.create-release.result }}\nHomebrew Update: ${{ needs.update-homebrew.result }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Action Required",
+                      "value": "1. Check GitHub Actions logs\n2. Resolve pipeline issues\n3. Re-run failed jobs\n4. Manual Homebrew update may be needed",
+                      "short": false
+                    },
+                    {
+                      "title": "Troubleshooting",
+                      "value": "<https://github.com/mr-tanta/portkill/actions/runs/${{ github.run_id }}|View Detailed Logs>",
+                      "short": false
+                    }
+                  ],
+                  "footer": "PortKill Release Pipeline • Requires Attention",
+                  "ts": '$(date +%s)'
+                }]
+              }' \
               "$SLACK_WEBHOOK_URL"
           fi

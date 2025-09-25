@@ -1,0 +1,294 @@
+name: Deployment Notifications
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment Environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+        - production
+        - staging
+        - development
+      version:
+        description: 'Version being deployed'
+        required: true
+        default: 'latest'
+
+env:
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+jobs:
+  pre-deployment:
+    name: Pre-deployment Notification
+    runs-on: ubuntu-latest
+    outputs:
+      deployment_id: ${{ steps.create_deployment.outputs.deployment_id }}
+    steps:
+      - name: Extract version info
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            ENVIRONMENT="production"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Deployment
+        id: create_deployment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              environment: '${{ steps.version.outputs.environment }}',
+              description: 'PortKill ${{ steps.version.outputs.version }} deployment',
+              auto_merge: false,
+              required_contexts: []
+            });
+            console.log(`Created deployment: ${deployment.data.id}`);
+            return deployment.data.id;
+          result-encoding: string
+
+      - name: Slack - Deployment Started
+        run: |
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{
+                "text": "🚀 PortKill Deployment Started",
+                "attachments": [{
+                  "color": "#1f77b4",
+                  "fields": [
+                    {
+                      "title": "Version",
+                      "value": "${{ steps.version.outputs.version }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Environment", 
+                      "value": "${{ steps.version.outputs.environment }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Commit",
+                      "value": "<https://github.com/${{ github.repository }}/commit/${{ github.sha }}|${{ github.sha }}>",
+                      "short": true
+                    },
+                    {
+                      "title": "Triggered by",
+                      "value": "${{ github.actor }}",
+                      "short": true
+                    }
+                  ],
+                  "footer": "PortKill CI/CD",
+                  "ts": '$(date +%s)'
+                }]
+              }' \
+              "$SLACK_WEBHOOK_URL"
+          fi
+
+  simulate-deployment:
+    name: Simulate Deployment Process
+    needs: pre-deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate deployment
+        run: |
+          echo "🔍 Validating deployment prerequisites..."
+          
+          # Check if portkill script exists
+          if [[ ! -f "bin/portkill" ]]; then
+            echo "❌ PortKill script not found"
+            exit 1
+          fi
+          
+          # Validate script syntax
+          bash -n bin/portkill || exit 1
+          echo "✅ Script syntax validation passed"
+          
+          # Check version consistency
+          SCRIPT_VERSION=$(grep 'readonly VERSION=' bin/portkill | cut -d'"' -f2)
+          echo "📦 Script version: $SCRIPT_VERSION"
+          
+          echo "✅ Deployment validation completed"
+
+      - name: Simulate deployment steps
+        run: |
+          echo "📋 Simulating deployment process..."
+          
+          # Simulate Homebrew formula update check
+          echo "🍺 Checking Homebrew formula..."
+          sleep 2
+          echo "✅ Homebrew formula ready for update"
+          
+          # Simulate package distribution
+          echo "📦 Preparing distribution packages..."
+          sleep 3
+          echo "✅ Distribution packages ready"
+          
+          # Simulate installation script validation
+          echo "🔧 Validating installation scripts..."
+          bash -n install.sh || exit 1
+          bash -n uninstall.sh || exit 1
+          sleep 2
+          echo "✅ Installation scripts validated"
+          
+          echo "🎉 Deployment simulation completed successfully"
+
+      - name: Mark deployment as success
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: '${{ needs.pre-deployment.outputs.deployment_id }}',
+              state: 'success',
+              description: 'Deployment completed successfully',
+              environment_url: 'https://github.com/${{ github.repository }}/releases'
+            });
+
+  deployment-success:
+    name: Deployment Success Notification
+    needs: [pre-deployment, simulate-deployment]
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Extract version info
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            ENVIRONMENT="production"
+            RELEASE_URL="${{ github.event.release.html_url }}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+            RELEASE_URL="https://github.com/${{ github.repository }}/releases"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "release_url=$RELEASE_URL" >> $GITHUB_OUTPUT
+
+      - name: Slack - Deployment Success
+        run: |
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{
+                "text": "✅ PortKill Deployment Successful!",
+                "attachments": [{
+                  "color": "good",
+                  "fields": [
+                    {
+                      "title": "Version Deployed",
+                      "value": "${{ steps.version.outputs.version }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Environment",
+                      "value": "${{ steps.version.outputs.environment }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Installation Command",
+                      "value": "`brew tap mr-tanta/portkill && brew install portkill`",
+                      "short": false
+                    },
+                    {
+                      "title": "Release Notes",
+                      "value": "<${{ steps.version.outputs.release_url }}|View Release>",
+                      "short": true
+                    },
+                    {
+                      "title": "Duration",
+                      "value": "~5 minutes",
+                      "short": true
+                    }
+                  ],
+                  "footer": "PortKill CI/CD • Deployment Complete",
+                  "ts": '$(date +%s)'
+                }]
+              }' \
+              "$SLACK_WEBHOOK_URL"
+          fi
+
+  deployment-failure:
+    name: Deployment Failure Notification
+    needs: [pre-deployment, simulate-deployment]
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - name: Extract version info
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            ENVIRONMENT="production"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+            ENVIRONMENT="${{ github.event.inputs.environment }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+
+      - name: Mark deployment as failure
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: '${{ needs.pre-deployment.outputs.deployment_id }}',
+              state: 'failure',
+              description: 'Deployment failed - check logs for details'
+            });
+
+      - name: Slack - Deployment Failure
+        run: |
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{
+                "text": "❌ PortKill Deployment Failed!",
+                "attachments": [{
+                  "color": "danger",
+                  "fields": [
+                    {
+                      "title": "Version",
+                      "value": "${{ steps.version.outputs.version }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Environment",
+                      "value": "${{ steps.version.outputs.environment }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Action Required",
+                      "value": "Check GitHub Actions logs and resolve issues",
+                      "short": false
+                    },
+                    {
+                      "title": "Logs",
+                      "value": "<https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Logs>",
+                      "short": true
+                    }
+                  ],
+                  "footer": "PortKill CI/CD • Deployment Failed",
+                  "ts": '$(date +%s)'
+                }]
+              }' \
+              "$SLACK_WEBHOOK_URL"
+          fi

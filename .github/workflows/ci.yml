@@ -157,7 +157,43 @@ jobs:
         run: |
           if [ -n "$SLACK_WEBHOOK_URL" ]; then
             curl -X POST -H 'Content-type: application/json' \
-              --data '{"text":"✅ PortKill CI/CD Pipeline SUCCESS\n• Branch: ${{ github.ref_name }}\n• Commit: ${{ github.sha }}\n• All tests passed and package built successfully!"}' \
+              --data '{
+                "text": "✅ PortKill CI Pipeline Passed!",
+                "attachments": [{
+                  "color": "good",
+                  "title": "Build Successful",
+                  "title_link": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+                  "fields": [
+                    {
+                      "title": "Branch",
+                      "value": "${{ github.ref_name }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Event",
+                      "value": "${{ github.event_name }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Commit",
+                      "value": "<https://github.com/${{ github.repository }}/commit/${{ github.sha }}|${{ github.sha }}>",
+                      "short": true
+                    },
+                    {
+                      "title": "Author",
+                      "value": "${{ github.actor }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Tests Passed",
+                      "value": "✅ Code Quality & Linting\n✅ Cross-platform Testing\n✅ Security Scanning\n✅ Build & Package",
+                      "short": false
+                    }
+                  ],
+                  "footer": "PortKill CI/CD",
+                  "ts": '$(date +%s)'
+                }]
+              }' \
               "$SLACK_WEBHOOK_URL"
           fi
 
@@ -166,6 +202,37 @@ jobs:
         run: |
           if [ -n "$SLACK_WEBHOOK_URL" ]; then
             curl -X POST -H 'Content-type: application/json' \
-              --data '{"text":"❌ PortKill CI/CD Pipeline FAILED\n• Branch: ${{ github.ref_name }}\n• Commit: ${{ github.sha }}\n• Check GitHub Actions for details"}' \
+              --data '{
+                "text": "❌ PortKill CI Pipeline Failed!",
+                "attachments": [{
+                  "color": "danger",
+                  "title": "Build Failed",
+                  "title_link": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+                  "fields": [
+                    {
+                      "title": "Branch",
+                      "value": "${{ github.ref_name }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Author",
+                      "value": "${{ github.actor }}",
+                      "short": true
+                    },
+                    {
+                      "title": "Failed Jobs",
+                      "value": "Lint: ${{ needs.lint.result }}\nTest: ${{ needs.test.result }}\nBuild: ${{ needs.build-test.result }}",
+                      "short": false
+                    },
+                    {
+                      "title": "Action Required",
+                      "value": "Check logs and fix issues before merging",
+                      "short": false
+                    }
+                  ],
+                  "footer": "PortKill CI/CD • Action Required",
+                  "ts": '$(date +%s)'
+                }]
+              }' \
               "$SLACK_WEBHOOK_URL"
           fi
