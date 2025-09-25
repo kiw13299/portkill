@@ -8,7 +8,7 @@ set -e
 
 # Script metadata
 readonly SCRIPT_NAME="PortKill"
-readonly VERSION="2.0.0"
+readonly VERSION="2.1.0"
 readonly AUTHOR="Abraham Esandayinze Tanta"
 readonly CONFIG_DIR="$HOME/.portkill"
 readonly LOG_FILE="$CONFIG_DIR/portkill.log"
@@ -36,6 +36,7 @@ SAFE_MODE=true
 AUTO_CONFIRM=false
 SHOW_HEADERS=true
 MONITORING_INTERVAL=2
+HISTORY_LIMIT=50
 # LAST_SCAN_TIME=0 # Reserved for future use - disabled to avoid ShellCheck warning
 
 # Protected system processes
@@ -619,6 +620,175 @@ security_scan() {
     fi
 }
 
+# Port history and analytics functions
+show_port_history() {
+    local limit="${1:-$HISTORY_LIMIT}"
+    local format="${2:-table}"
+    
+    show_section_header "Port Usage History"
+    
+    if [[ ! -f "$HISTORY_FILE" ]]; then
+        print_colored "$YELLOW" "[i]" "No history available yet"
+        return
+    fi
+    
+    if [[ "$format" == "csv" ]]; then
+        echo "Timestamp,Action,Details"
+        tail -n "$limit" "$HISTORY_FILE" | sort -r
+        return
+    fi
+    
+    print_colored "$CYAN" "[i]" "Showing last $limit history entries"
+    echo
+    
+    printf "%-20s %-10s %-40s\n" "Timestamp" "Action" "Details"
+    echo -e "${GRAY}────────────────────────────────────────────────────────────────────────${NC}"
+    
+    tail -n "$limit" "$HISTORY_FILE" | sort -r | while IFS='|' read -r timestamp action details; do
+        local color="$CYAN"
+        case "$action" in
+            "KILL") color="$RED" ;;
+            "LIST") color="$GREEN" ;;
+            "SCAN") color="$BLUE" ;;
+            "MONITOR") color="$YELLOW" ;;
+        esac
+        
+        printf "${color}%-20s %-10s${NC} %-40s\n" "$timestamp" "$action" "$details"
+    done
+    
+    echo
+    print_colored "$GRAY" "[i]" "Use 'history --csv > file.csv' to export data"
+}
+
+show_port_analytics() {
+    show_section_header "Port Usage Analytics"
+    
+    if [[ ! -f "$HISTORY_FILE" ]]; then
+        print_colored "$YELLOW" "[i]" "No history data available for analytics"
+        return
+    fi
+    
+    local total_entries; total_entries=$(wc -l < "$HISTORY_FILE" 2>/dev/null || echo "0")
+    print_colored "$CYAN" "[i]" "Analyzing $total_entries history entries"
+    echo
+    
+    # Most active ports
+    echo -e "${BOLD}${WHITE}Most Frequently Used Ports:${NC}"
+    echo -e "${GRAY}────────────────────────────────${NC}"
+    
+    # Extract port numbers from history and count them
+    if grep -E "Port: [0-9]+" "$HISTORY_FILE" | \
+       sed -E 's/.*Port: ([0-9]+).*/\1/' | \
+       sort | uniq -c | sort -rn | head -10 | \
+       while read -r count port; do
+           local service; service=$(get_service_name "$port")
+           printf "${GREEN}%-4s${NC} Port %-5s %s\n" "$count" "$port" "${service:+($service)}"
+       done; then
+        true
+    else
+        print_colored "$GRAY" "[i]" "No port data found in history"
+    fi
+    
+    echo
+    
+    # Action breakdown
+    echo -e "${BOLD}${WHITE}Action Breakdown:${NC}"
+    echo -e "${GRAY}──────────────────${NC}"
+    
+    # Count different actions
+    cut -d'|' -f2 "$HISTORY_FILE" | sort | uniq -c | sort -rn | while read -r count action; do
+        local color="$CYAN"
+        case "$action" in
+            "KILL") color="$RED" ;;
+            "LIST") color="$GREEN" ;;
+            "SCAN") color="$BLUE" ;;
+            "MONITOR") color="$YELLOW" ;;
+        esac
+        
+        printf "${color}%-10s${NC} %s operations\n" "$action" "$count"
+    done
+    
+    echo
+    
+    # Recent activity (last 7 days)
+    echo -e "${BOLD}${WHITE}Recent Activity (Last 7 Days):${NC}"
+    echo -e "${GRAY}───────────────────────────────${NC}"
+    
+    local week_ago; week_ago=$(date -d '7 days ago' '+%Y-%m-%d' 2>/dev/null || date -v-7d '+%Y-%m-%d' 2>/dev/null)
+    if [[ -n "$week_ago" ]]; then
+        local recent_count; recent_count=$(awk -F'|' -v date="$week_ago" '$1 >= date' "$HISTORY_FILE" 2>/dev/null | wc -l)
+        print_colored "$CYAN" "[●]" "$recent_count operations in the last week"
+        
+        # Today's activity
+        local today; today=$(date '+%Y-%m-%d')
+        local today_count; today_count=$(grep "^$today" "$HISTORY_FILE" 2>/dev/null | wc -l)
+        print_colored "$GREEN" "[●]" "$today_count operations today"
+    else
+        print_colored "$YELLOW" "[i]" "Unable to calculate date ranges on this system"
+    fi
+}
+
+clear_history() {
+    local keep_entries="${1:-100}"
+    
+    if [[ ! -f "$HISTORY_FILE" ]]; then
+        print_colored "$YELLOW" "[i]" "No history file to clear"
+        return
+    fi
+    
+    local current_entries; current_entries=$(wc -l < "$HISTORY_FILE" 2>/dev/null || echo "0")
+    
+    if [[ "$keep_entries" == "all" ]]; then
+        > "$HISTORY_FILE"
+        print_colored "$GREEN" "[✓]" "All history entries cleared"
+        add_to_history "ADMIN" "History cleared completely"
+    else
+        tail -n "$keep_entries" "$HISTORY_FILE" > "$HISTORY_FILE.tmp" && mv "$HISTORY_FILE.tmp" "$HISTORY_FILE"
+        local remaining; remaining=$(wc -l < "$HISTORY_FILE" 2>/dev/null || echo "0")
+        print_colored "$GREEN" "[✓]" "History trimmed: $current_entries → $remaining entries"
+        add_to_history "ADMIN" "History trimmed to $remaining entries"
+    fi
+}
+
+export_history() {
+    local output_file="$1"
+    local format="${2:-csv}"
+    
+    if [[ ! -f "$HISTORY_FILE" ]]; then
+        print_colored "$RED" "[!]" "No history file found"
+        return 1
+    fi
+    
+    if [[ -z "$output_file" ]]; then
+        output_file="portkill_history_$(date '+%Y%m%d_%H%M%S').$format"
+    fi
+    
+    case "$format" in
+        csv)
+            {
+                echo "Timestamp,Action,Details"
+                sed 's/|/,/g' "$HISTORY_FILE"
+            } > "$output_file"
+            ;;
+        json)
+            {
+                echo '['
+                awk -F'|' 'BEGIN {first=1} 
+                     {if(!first) print ","; first=0;
+                      gsub(/"/, "\\""_, $3);
+                      printf "{\"timestamp\":\"%s\",\"action\":\"%s\",\"details\":\"%s\"}", $1, $2, $3}' "$HISTORY_FILE"
+                echo '\n]'
+            } > "$output_file"
+            ;;
+        *)
+            cp "$HISTORY_FILE" "$output_file"
+            ;;
+    esac
+    
+    print_colored "$GREEN" "[✓]" "History exported to: $output_file"
+    add_to_history "EXPORT" "History exported to $output_file ($format format)"
+}
+
 # Interactive menu
 show_main_menu() {
     show_header
@@ -633,7 +803,8 @@ show_main_menu() {
     echo "  5) Monitor ports in real-time"
     echo "  6) Security scan"
     echo "  7) View operation history"
-    echo "  8) System information"
+    echo "  8) Port usage analytics"
+    echo "  9) Export history data"
     echo "  0) Exit"
     echo
 }
@@ -642,7 +813,7 @@ interactive_menu() {
     while true; do
         show_main_menu
         
-        echo -ne "${WHITE}Select an option (0-8): ${NC}"
+        echo -ne "${WHITE}Select an option (0-9): ${NC}"
         read -r choice
         
         case "$choice" in
@@ -697,6 +868,26 @@ interactive_menu() {
                 echo -ne "${GRAY}Press Enter to continue...${NC}"
                 read -r
                 ;;
+            7)
+                show_port_history
+                echo -ne "${GRAY}Press Enter to continue...${NC}"
+                read -r
+                ;;
+            8)
+                show_port_analytics
+                echo -ne "${GRAY}Press Enter to continue...${NC}"
+                read -r
+                ;;
+            9)
+                echo -ne "${WHITE}Export format (csv/json/raw) [csv]: ${NC}"
+                read -r format
+                format="${format:-csv}"
+                echo -ne "${WHITE}Output filename (optional): ${NC}"
+                read -r filename
+                export_history "$filename" "$format"
+                echo -ne "${GRAY}Press Enter to continue...${NC}"
+                read -r
+                ;;
             0)
                 print_colored "$GREEN" "[✓]" "Exiting PortKill"
                 exit 0
@@ -723,6 +914,7 @@ show_help() {
     echo "  kill     [-f] [-n] <port>      Kill processes on port(s)"
     echo "  monitor  <ports>               Real-time monitoring"
     echo "  scan     [--security]          Scan ports or security"
+    echo "  history  [--csv] [--analytics] View port usage history & analytics"
     echo "  menu                           Interactive menu mode"
     echo
     echo "OPTIONS:"
@@ -745,6 +937,8 @@ show_help() {
     echo "  $0 list 3000                  # List processes on port 3000"
     echo "  $0 monitor 3000 8080          # Monitor ports in real-time"
     echo "  $0 scan --security            # Security scan"
+    echo "  $0 history                    # View port usage history"
+    echo "  $0 history --analytics        # Show port usage analytics"
     echo "  $0 menu                       # Interactive menu mode"
 }
 
@@ -819,6 +1013,46 @@ main() {
                 fi
                 break
                 ;;
+            history)
+                command="$1"
+                shift
+                # Process history options
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in
+                        --csv)
+                            HISTORY_FORMAT="csv"
+                            shift
+                            ;;
+                        --analytics)
+                            HISTORY_ANALYTICS=true
+                            shift
+                            ;;
+                        --export)
+                            HISTORY_EXPORT=true
+                            shift
+                            [[ $# -gt 0 && ! "$1" =~ ^-- ]] && { HISTORY_EXPORT_FORMAT="$1"; shift; }
+                            ;;
+                        --clear)
+                            HISTORY_CLEAR=true
+                            shift
+                            [[ $# -gt 0 && ! "$1" =~ ^-- ]] && { HISTORY_KEEP="$1"; shift; }
+                            ;;
+                        --*)
+                            print_colored "$RED" "[!]" "Unknown history option: $1"
+                            exit 1
+                            ;;
+                        *)
+                            if [[ "$1" =~ ^[0-9]+$ ]]; then
+                                HISTORY_LIMIT="$1"
+                                shift
+                            else
+                                break
+                            fi
+                            ;;
+                    esac
+                done
+                break
+                ;;
             -*)
                 print_colored "$RED" "[!]" "Unknown option: $1"
                 echo "Use --help for usage information"
@@ -889,6 +1123,19 @@ main() {
         menu)
             INTERACTIVE_MODE=true
             interactive_menu
+            ;;
+        history)
+            if [[ "$HISTORY_ANALYTICS" == "true" ]]; then
+                show_port_analytics
+            elif [[ "$HISTORY_FORMAT" == "csv" ]]; then
+                show_port_history "$HISTORY_LIMIT" "csv"
+            elif [[ "$HISTORY_EXPORT" == "true" ]]; then
+                export_history "" "${HISTORY_EXPORT_FORMAT:-csv}"
+            elif [[ "$HISTORY_CLEAR" == "true" ]]; then
+                clear_history "${HISTORY_KEEP:-100}"
+            else
+                show_port_history "$HISTORY_LIMIT"
+            fi
             ;;
         "")
             if [[ ${#ports[@]} -gt 0 ]]; then
