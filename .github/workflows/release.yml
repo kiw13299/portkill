@@ -1,12 +1,10 @@
 name: 🚀 Robust Release Pipeline
 
-# STRICT TRIGGERS - Only tags and manual dispatch
-# This workflow will NEVER run on branch pushes, only on tag pushes and manual triggers
+# TRIGGERS: Only version tags and manual dispatch
 on:
-  create:  # Triggers when tags are created
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'  # Only version tags like v1.0.0, v2.1.3, etc.
+      - 'v*.*.*'  # Version tags like v1.0.0, v2.1.3, etc.
   workflow_dispatch:
     inputs:
       version:
@@ -46,10 +44,8 @@ jobs:
     name: 🔍 Preflight Validation
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: >
-      (github.event_name == 'push' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
-      (github.event_name == 'create' && github.ref_type == 'tag' && startsWith(github.ref_name, 'v')) ||
-      github.event_name == 'workflow_dispatch'
+    # Only run for tag pushes or manual dispatch
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     outputs:
       version: ${{ steps.version.outputs.version }}
       version_number: ${{ steps.version.outputs.version_number }}
