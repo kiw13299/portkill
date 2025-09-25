@@ -159,7 +159,7 @@ jobs:
             await github.rest.repos.createDeploymentStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              deployment_id: '${{ needs.pre-deployment.outputs.deployment_id }}',
+              deployment_id: ${{ needs.pre-deployment.outputs.deployment_id }},
               state: 'success',
               description: 'Deployment completed successfully',
               environment_url: 'https://github.com/${{ github.repository }}/releases'
@@ -255,7 +255,7 @@ jobs:
             await github.rest.repos.createDeploymentStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              deployment_id: '${{ needs.pre-deployment.outputs.deployment_id }}',
+              deployment_id: ${{ needs.pre-deployment.outputs.deployment_id }},
               state: 'failure',
               description: 'Deployment failed - check logs for details'
             });
