@@ -19,6 +19,10 @@ on:
         required: true
         default: 'latest'
 
+permissions:
+  contents: read
+  deployments: write
+
 env:
   SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
