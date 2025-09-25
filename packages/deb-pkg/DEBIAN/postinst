@@ -1,0 +1,22 @@
+#!/bin/bash
+
+set -e
+
+# Create configuration directory if it doesn't exist
+mkdir -p /etc/portkill
+
+# Set proper permissions
+chmod 755 /usr/bin/portkill
+chmod 644 /etc/portkill/portkill.conf 2>/dev/null || true
+
+# Create log directory
+mkdir -p /var/log/portkill
+chmod 755 /var/log/portkill
+
+echo "PortKill has been installed successfully!"
+echo "Run 'portkill --help' to get started."
+echo ""
+echo "Configuration file: /etc/portkill/portkill.conf"
+echo "Documentation: /usr/share/doc/portkill/"
+
+exit 0

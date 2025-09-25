@@ -1,0 +1,27 @@
+Package: portkill
+Version: 2.3.1-1
+Section: utils
+Priority: optional
+Architecture: all
+Essential: no
+Depends: bash (>= 4.0), coreutils, util-linux, procps
+Recommends: bc, netcat-openbsd | netcat-traditional, lsof, iproute2
+Maintainer: mr-tanta <your-email@example.com>
+Homepage: https://github.com/mr-tanta/portkill
+Description: Advanced port management and network analysis tool
+ PortKill is a powerful command-line utility for managing network ports and
+ analyzing system processes. It provides comprehensive port management
+ capabilities including:
+ .
+  * Kill processes by port number with multiple signal options
+  * List and monitor active processes on specific ports
+  * Real-time port monitoring and process tree visualization
+  * Port scanning and security analysis
+  * Performance benchmarking for local and remote ports
+  * Historical analytics and export capabilities
+  * Interactive menu-driven interface
+ .
+ PortKill supports both IPv4 and IPv6, handles port ranges, and includes
+ safety features to protect system processes. It's designed for system
+ administrators, developers, and security professionals who need reliable
+ port management tools.

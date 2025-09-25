@@ -1,0 +1,10 @@
+#!/bin/bash
+
+set -e
+
+echo "Removing PortKill..."
+
+# Stop any running portkill processes
+pkill -f "portkill" 2>/dev/null || true
+
+exit 0
