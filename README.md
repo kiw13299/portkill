@@ -14,6 +14,7 @@ PortKill provides a streamlined interface for managing port conflicts during dev
 - **Process Tree Visualization**: Display hierarchical process relationships
 - **Bulk Operations**: Manage multiple ports simultaneously
 - **Real-time Monitoring**: Continuously monitor port activity
+- **Port Performance Testing**: Benchmark connection speed and reliability
 - **Cross-platform**: Works on macOS and Linux systems
 
 ## Installation
@@ -75,6 +76,12 @@ Show process tree with custom depth:
 portkill tree --depth 3 8080
 ```
 
+Benchmark port performance:
+```bash
+portkill benchmark 3000
+portkill benchmark 80 google.com
+```
+
 ### Advanced Usage
 
 Interactive mode:
@@ -111,6 +118,7 @@ portkill --interactive 8080
 | `tree` | Show process tree hierarchy | `portkill tree 3000` |
 | `scan` | Display all listening ports | `portkill scan` |
 | `monitor` | Real-time port monitoring | `portkill monitor 3000 8080` |
+| `benchmark` | Performance test port connections | `portkill benchmark 80 google.com` |
 | `menu` | Launch interactive interface | `portkill menu` |
 
 ### Options

@@ -8,7 +8,7 @@ set -e
 
 # Script metadata
 readonly SCRIPT_NAME="PortKill"
-readonly VERSION="2.2.1"
+readonly VERSION="2.3.0"
 readonly AUTHOR="Abraham Esandayinze Tanta"
 readonly CONFIG_DIR="$HOME/.portkill"
 readonly LOG_FILE="$CONFIG_DIR/portkill.log"
@@ -993,16 +993,17 @@ show_main_menu() {
     echo -e "${GREEN}Main Menu${NC}"
     echo -e "${GRAY}----------------------------------------${NC}"
     echo
-    echo "  1) List processes on specific port"
+    echo "  1) List processes on a port"
     echo "  2) List all listening ports"
-    echo "  3) Kill processes on port"
-    echo "  4) Bulk kill multiple ports"
+    echo "  3) Kill processes on a port"
+    echo "  4) Kill processes on multiple ports"
     echo "  5) Monitor ports in real-time"
     echo "  6) Security scan"
     echo "  7) Show process tree for port"
-    echo "  8) View operation history"
-    echo "  9) Port usage analytics"
-    echo "  10) Export history data"
+    echo "  8) Port performance benchmark"
+    echo "  9) View operation history"
+    echo "  10) Port usage analytics"
+    echo "  11) Export history data"
     echo "  0) Exit"
     echo
 }
@@ -1011,7 +1012,7 @@ interactive_menu() {
     while true; do
         show_main_menu
         
-        echo -ne "${WHITE}Select an option (0-10): ${NC}"
+        echo -ne "${WHITE}Select an option (0-11): ${NC}"
         read -r choice
         
         case "$choice" in
@@ -1079,16 +1080,31 @@ interactive_menu() {
                 read -r
                 ;;
             8)
-                show_port_history
+                echo -ne "${WHITE}Enter port number: ${NC}"
+                read -r port
+                if validate_port "$port"; then
+                    echo -ne "${WHITE}Enter host [localhost]: ${NC}"
+                    read -r host
+                    host="${host:-localhost}"
+                    echo -ne "${WHITE}Number of tests [10]: ${NC}"
+                    read -r test_count
+                    test_count="${test_count:-10}"
+                    benchmark_port "$port" "$host" "$test_count"
+                fi
                 echo -ne "${GRAY}Press Enter to continue...${NC}"
                 read -r
                 ;;
             9)
-                show_port_analytics
+                show_port_history
                 echo -ne "${GRAY}Press Enter to continue...${NC}"
                 read -r
                 ;;
             10)
+                show_port_analytics
+                echo -ne "${GRAY}Press Enter to continue...${NC}"
+                read -r
+                ;;
+            11)
                 echo -ne "${WHITE}Export format (csv/json/raw) [csv]: ${NC}"
                 read -r format
                 format="${format:-csv}"
@@ -1110,6 +1126,272 @@ interactive_menu() {
     done
 }
 
+# Port benchmark and performance testing
+benchmark_port() {
+    local port="$1"
+    local host="${2:-localhost}"
+    local test_count="${3:-10}"
+    local concurrent_tests="${4:-5}"
+    local timeout_seconds="${5:-5}"
+    
+    if ! validate_port "$port"; then
+        return 1
+    fi
+    
+    show_section_header "Port Performance Benchmark - $host:$port"
+    
+    # Helper function for high-precision timestamps
+    get_timestamp() {
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            if command -v python3 &> /dev/null; then
+                python3 -c "import time; print(f'{time.time():.3f}')"
+            else
+                date +%s
+            fi
+        else
+            date +%s.%3N
+        fi
+    }
+    
+    print_colored "$CYAN" "[i]" "Starting benchmark with $test_count tests ($concurrent_tests concurrent)"
+    print_colored "$CYAN" "[i]" "Timeout: ${timeout_seconds}s per test"
+    echo
+    
+    local start_time; start_time=$(get_timestamp)
+    local success_count=0
+    local total_response_time=0
+    local min_time=999999
+    local max_time=0
+    local response_times=()
+    
+    # Test if port is actually listening
+    print_colored "$BLUE" "[~]" "Checking if port $port is accessible..."
+    
+    # Function to run command with timeout (macOS compatible)
+    run_with_timeout() {
+        local timeout_duration="$1"
+        shift
+        
+        if command -v timeout &> /dev/null; then
+            # GNU timeout (Linux)
+            timeout "$timeout_duration" "$@"
+        elif command -v gtimeout &> /dev/null; then
+            # GNU timeout via Homebrew (macOS)
+            gtimeout "$timeout_duration" "$@"
+        else
+            # Fallback: use background process and kill
+            "$@" &
+            local pid=$!
+            (
+                sleep "$timeout_duration"
+                kill "$pid" 2>/dev/null
+            ) &
+            local killer_pid=$!
+            
+            if wait "$pid" 2>/dev/null; then
+                kill "$killer_pid" 2>/dev/null
+                return 0
+            else
+                kill "$killer_pid" 2>/dev/null
+                return 1
+            fi
+        fi
+    }
+    
+    local port_check_result
+    if command -v nc &> /dev/null; then
+        if run_with_timeout "$timeout_seconds" nc -z "$host" "$port" 2>/dev/null; then
+            print_colored "$GREEN" "[✓]" "Port $port is accessible on $host"
+        else
+            print_colored "$RED" "[!]" "Port $port is not accessible on $host"
+            return 1
+        fi
+    elif command -v telnet &> /dev/null; then
+        if run_with_timeout "$timeout_seconds" bash -c "echo '' | telnet $host $port" &>/dev/null; then
+            print_colored "$GREEN" "[✓]" "Port $port is accessible on $host"
+        else
+            print_colored "$RED" "[!]" "Port $port is not accessible on $host"
+            return 1
+        fi
+    else
+        print_colored "$YELLOW" "[!]" "nc or telnet not found - skipping port accessibility check"
+    fi
+    
+    echo
+    print_colored "$BLUE" "[~]" "Running performance tests..."
+    
+    # Function to test a single connection
+    test_connection() {
+        local test_start; test_start=$(get_timestamp)
+        
+        if command -v nc &> /dev/null; then
+            if run_with_timeout "$timeout_seconds" nc -z "$host" "$port" 2>/dev/null; then
+                local test_end; test_end=$(get_timestamp)
+                local response_time; response_time=$(echo "$test_end - $test_start" | bc -l 2>/dev/null || echo "scale=3; $test_end - $test_start" | bc)
+                echo "$response_time"
+                return 0
+            fi
+        elif command -v telnet &> /dev/null; then
+            if run_with_timeout "$timeout_seconds" bash -c "echo '' | telnet $host $port" &>/dev/null; then
+                local test_end; test_end=$(get_timestamp)
+                local response_time; response_time=$(echo "$test_end - $test_start" | bc -l 2>/dev/null || echo "scale=3; $test_end - $test_start" | bc)
+                echo "$response_time"
+                return 0
+            fi
+        fi
+        
+        return 1
+    }
+    
+    # Run concurrent tests
+    local batch_size="$concurrent_tests"
+    local completed=0
+    
+    for ((batch_start=0; batch_start<test_count; batch_start+=batch_size)); do
+        local batch_end=$((batch_start + batch_size))
+        if [[ $batch_end -gt $test_count ]]; then
+            batch_end=$test_count
+        fi
+        
+        local pids=()
+        local temp_files=()
+        
+        # Start concurrent tests
+        for ((i=batch_start; i<batch_end; i++)); do
+            local temp_file; temp_file=$(mktemp)
+            temp_files+=("$temp_file")
+            
+            (
+                if result=$(test_connection); then
+                    echo "SUCCESS:$result" > "$temp_file"
+                else
+                    echo "FAILURE" > "$temp_file"
+                fi
+            ) &
+            
+            pids+=("$!")
+        done
+        
+        # Wait for batch to complete
+        for pid in "${pids[@]}"; do
+            wait "$pid"
+        done
+        
+        # Process results
+        for temp_file in "${temp_files[@]}"; do
+            local result; result=$(cat "$temp_file")
+            rm -f "$temp_file"
+            
+            if [[ "$result" =~ ^SUCCESS:(.+)$ ]]; then
+                local response_time="${BASH_REMATCH[1]}"
+                ((success_count++))
+                response_times+=("$response_time")
+                
+                # Use bc if available for floating point arithmetic
+                if command -v bc &> /dev/null; then
+                    total_response_time=$(echo "$total_response_time + $response_time" | bc -l)
+                    if (( $(echo "$response_time < $min_time" | bc -l) )); then
+                        min_time="$response_time"
+                    fi
+                    if (( $(echo "$response_time > $max_time" | bc -l) )); then
+                        max_time="$response_time"
+                    fi
+                else
+                    # Fallback to integer arithmetic (multiply by 1000 for milliseconds)
+                    local int_response_time; int_response_time=$(echo "$response_time * 1000" | cut -d'.' -f1)
+                    local int_total; int_total=$(echo "$total_response_time * 1000" | cut -d'.' -f1)
+                    int_total=$((int_total + int_response_time))
+                    total_response_time=$(echo "scale=3; $int_total / 1000" | bc -l 2>/dev/null || echo "$int_total")
+                fi
+            fi
+            
+            ((completed++))
+            show_progress_bar "$completed" "$test_count"
+        done
+    done
+    
+    echo
+    echo
+    
+    local end_time; end_time=$(get_timestamp)
+    local total_test_time
+    if command -v bc &> /dev/null; then
+        total_test_time=$(echo "$end_time - $start_time" | bc -l)
+    else
+        total_test_time=$(echo "scale=3; $end_time - $start_time" | bc)
+    fi
+    
+    # Display results
+    show_section_header "Benchmark Results"
+    
+    echo -e "${BOLD}Test Configuration:${NC}"
+    echo -e "  Target: ${CYAN}$host:$port${NC}"
+    echo -e "  Tests: ${YELLOW}$test_count${NC} (${YELLOW}$concurrent_tests${NC} concurrent)"
+    echo -e "  Timeout: ${YELLOW}${timeout_seconds}s${NC} per test"
+    echo
+    
+    echo -e "${BOLD}Connection Results:${NC}"
+    echo -e "  Successful: ${GREEN}$success_count${NC}/$test_count ($(echo "scale=1; $success_count * 100 / $test_count" | bc)%)"
+    echo -e "  Failed: ${RED}$((test_count - success_count))${NC}/$test_count ($(echo "scale=1; (100 - ($success_count * 100 / $test_count))" | bc)%)"
+    echo
+    
+    if [[ $success_count -gt 0 ]]; then
+        local avg_time
+        if command -v bc &> /dev/null; then
+            avg_time=$(echo "scale=3; $total_response_time / $success_count" | bc -l)
+        else
+            avg_time=$(echo "$total_response_time / $success_count" | bc)
+        fi
+        
+        echo -e "${BOLD}Response Time Statistics:${NC}"
+        echo -e "  Average: ${CYAN}${avg_time}s${NC} ($(echo "$avg_time * 1000" | bc | cut -d'.' -f1)ms)"
+        echo -e "  Minimum: ${GREEN}${min_time}s${NC} ($(echo "$min_time * 1000" | bc | cut -d'.' -f1)ms)"
+        echo -e "  Maximum: ${RED}${max_time}s${NC} ($(echo "$max_time * 1000" | bc | cut -d'.' -f1)ms)"
+        echo
+        
+        # Calculate percentiles if we have enough data
+        if [[ ${#response_times[@]} -ge 5 ]]; then
+            local sorted_times
+            IFS=$'\n' sorted_times=($(printf '%s\n' "${response_times[@]}" | sort -n))
+            
+            local p50_index=$(( ${#sorted_times[@]} * 50 / 100 ))
+            local p95_index=$(( ${#sorted_times[@]} * 95 / 100 ))
+            local p99_index=$(( ${#sorted_times[@]} * 99 / 100 ))
+            
+            echo -e "${BOLD}Percentiles:${NC}"
+            echo -e "  50th: ${CYAN}${sorted_times[$p50_index]}s${NC}"
+            [[ $p95_index -lt ${#sorted_times[@]} ]] && echo -e "  95th: ${YELLOW}${sorted_times[$p95_index]}s${NC}"
+            [[ $p99_index -lt ${#sorted_times[@]} ]] && echo -e "  99th: ${RED}${sorted_times[$p99_index]}s${NC}"
+            echo
+        fi
+    fi
+    
+    echo -e "${BOLD}Performance Metrics:${NC}"
+    if command -v bc &> /dev/null; then
+        local requests_per_second; requests_per_second=$(echo "scale=2; $success_count / $total_test_time" | bc -l)
+        echo -e "  Throughput: ${GREEN}${requests_per_second}${NC} successful connections/sec"
+    fi
+    echo -e "  Total Test Time: ${CYAN}${total_test_time}s${NC}"
+    echo
+    
+    # Performance assessment
+    if [[ $success_count -eq $test_count ]]; then
+        if command -v bc &> /dev/null && (( $(echo "$avg_time < 0.1" | bc -l) )); then
+            print_colored "$GREEN" "[✓]" "Excellent performance: All tests passed with avg response < 100ms"
+        elif command -v bc &> /dev/null && (( $(echo "$avg_time < 1.0" | bc -l) )); then
+            print_colored "$GREEN" "[✓]" "Good performance: All tests passed with avg response < 1s"
+        else
+            print_colored "$YELLOW" "[!]" "Moderate performance: All tests passed but response time is slow"
+        fi
+    elif [[ $success_count -gt $((test_count * 8 / 10)) ]]; then
+        print_colored "$YELLOW" "[!]" "Acceptable performance: Most tests passed (>80%)"
+    else
+        print_colored "$RED" "[!]" "Poor performance: Many connection failures (<80% success)"
+    fi
+    
+    add_to_history "BENCHMARK" "Port: $port, Host: $host, Tests: $test_count, Success: $success_count/$test_count"
+}
+
 # Help documentation
 show_help() {
     echo -e "${BOLD}$SCRIPT_NAME $VERSION${NC}"
@@ -1125,6 +1407,7 @@ show_help() {
     echo "  monitor  <ports>               Real-time monitoring"
     echo "  tree     [--depth N] <port>    Show process tree hierarchy"
     echo "  scan     [--security]          Scan ports or security"
+    echo "  benchmark <port> [host]        Performance test port connections"
     echo "  history  [--csv] [--analytics] View port usage history & analytics"
     echo "  menu                           Interactive menu mode"
     echo
@@ -1150,6 +1433,8 @@ show_help() {
     echo "  $0 tree --depth 3 8080        # Show process tree with max depth 3"
     echo "  $0 monitor 3000 8080          # Monitor ports in real-time"
     echo "  $0 scan --security            # Security scan"
+    echo "  $0 benchmark 3000             # Performance test port 3000"
+    echo "  $0 benchmark 80 google.com    # Test remote port performance"
     echo "  $0 history                    # View port usage history"
     echo "  $0 history --analytics        # Show port usage analytics"
     echo "  $0 menu                       # Interactive menu mode"
@@ -1253,6 +1538,11 @@ main() {
                 fi
                 break
                 ;;
+            benchmark)
+                command="$1"
+                shift
+                break
+                ;;
             history)
                 command="$1"
                 shift
@@ -1311,16 +1601,38 @@ main() {
         esac
     done
     
-    while [[ $# -gt 0 ]]; do
-        if parsed_ports=$(parse_port_range "$1"); then
-            read -ra range_ports <<< "$parsed_ports"
-            ports+=("${range_ports[@]}")
-        else
-            print_colored "$RED" "[!]" "Invalid port or range: $1"
-            exit 1
-        fi
-        shift
-    done
+    # Handle remaining arguments differently based on command
+    if [[ "$command" == "benchmark" ]]; then
+        # For benchmark: port [host] [count]
+        while [[ $# -gt 0 ]]; do
+            if [[ ${#ports[@]} -eq 0 ]]; then
+                # First argument should be port
+                if parsed_ports=$(parse_port_range "$1" 2>/dev/null); then
+                    read -ra range_ports <<< "$parsed_ports"
+                    ports+=("${range_ports[@]}")
+                else
+                    print_colored "$RED" "[!]" "Invalid port: $1"
+                    exit 1
+                fi
+            else
+                # Additional arguments for benchmark (host, count)
+                ports+=("$1")
+            fi
+            shift
+        done
+    else
+        # For other commands: parse as ports/ranges
+        while [[ $# -gt 0 ]]; do
+            if parsed_ports=$(parse_port_range "$1"); then
+                read -ra range_ports <<< "$parsed_ports"
+                ports+=("${range_ports[@]}")
+            else
+                print_colored "$RED" "[!]" "Invalid port or range: $1"
+                exit 1
+            fi
+            shift
+        done
+    fi
     
     case "$command" in
         list)
@@ -1380,6 +1692,29 @@ main() {
             INTERACTIVE_MODE=true
             interactive_menu
             ;;
+        benchmark)
+            if [[ ${#ports[@]} -eq 0 ]]; then
+                print_colored "$RED" "[!]" "No port specified for benchmark"
+                exit 1
+            fi
+            
+            # Parse benchmark arguments: port [host] [count]
+            local port="${ports[0]}"
+            local host="localhost"
+            local test_count="10"
+            
+            # Second argument is host (if provided)
+            if [[ ${#ports[@]} -gt 1 ]]; then
+                host="${ports[1]}"
+            fi
+            
+            # Third argument is test count (if provided and numeric)
+            if [[ ${#ports[@]} -gt 2 && "${ports[2]}" =~ ^[0-9]+$ ]]; then
+                test_count="${ports[2]}"
+            fi
+            
+            benchmark_port "$port" "$host" "$test_count"
+            ;;
         history)
             if [[ "$HISTORY_ANALYTICS" == "true" ]]; then
                 show_port_analytics
@@ -1421,6 +1756,7 @@ check_dependencies() {
     local missing=()
     
     local required_commands=("lsof" "ps" "kill" "netstat")
+    local optional_commands=("bc" "nc")
     for cmd in "${required_commands[@]}"; do
         if ! command -v "$cmd" &> /dev/null; then
             missing+=("$cmd")
@@ -1431,6 +1767,19 @@ check_dependencies() {
         print_colored "$RED" "[!]" "Missing required commands: ${missing[*]}"
         echo "Please install missing dependencies and try again"
         exit 1
+    fi
+    
+    # Check optional commands and warn if missing
+    local missing_optional=()
+    for cmd in "${optional_commands[@]}"; do
+        if ! command -v "$cmd" &> /dev/null; then
+            missing_optional+=("$cmd")
+        fi
+    done
+    
+    if [[ ${#missing_optional[@]} -gt 0 ]] && [[ "$VERBOSE_MODE" == "true" ]]; then
+        print_colored "$YELLOW" "[!]" "Optional commands not found: ${missing_optional[*]}"
+        print_colored "$YELLOW" "[i]" "Some features may have reduced functionality"
     fi
 }
 
