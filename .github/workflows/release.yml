@@ -155,7 +155,7 @@ jobs:
           # Create source tarball
           tar --exclude='.git*' --exclude='dist' --exclude='.idea' \
               -czf "dist/portkill-$VERSION.tar.gz" \
-              -C .. portkill-repo
+              .
           
           # Create install script package
           mkdir -p "dist/portkill-$VERSION-installer"
