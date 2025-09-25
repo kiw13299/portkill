@@ -8,7 +8,7 @@ set -e
 
 # Script metadata
 readonly SCRIPT_NAME="PortKill"
-readonly VERSION="2.2.0"
+readonly VERSION="2.2.1"
 readonly AUTHOR="Abraham Esandayinze Tanta"
 readonly CONFIG_DIR="$HOME/.portkill"
 readonly LOG_FILE="$CONFIG_DIR/portkill.log"

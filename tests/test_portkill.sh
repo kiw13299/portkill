@@ -81,7 +81,7 @@ run_test_with_output() {
 test_basic_functionality() {
     print_test_header "Basic Functionality Tests"
     
-    run_test_with_output "Version command" "PortKill 2.2.0" "$PORTKILL" --version
+    run_test_with_output "Version command" "PortKill 2.2.1" "$PORTKILL" --version
     run_test_with_output "Help command" "USAGE:" "$PORTKILL" --help
     run_test "Script is executable" test -x "$PORTKILL"
 }
