@@ -8,7 +8,7 @@ set -e
 
 # Script metadata
 readonly SCRIPT_NAME="PortKill"
-readonly VERSION="2.3.0"
+readonly VERSION="2.3.2"
 readonly AUTHOR="Abraham Esandayinze Tanta"
 readonly CONFIG_DIR="$HOME/.portkill"
 readonly LOG_FILE="$CONFIG_DIR/portkill.log"
@@ -44,6 +44,7 @@ declare -a PROTECTED_PROCESSES=("launchd" "kernel_task" "systemstats" "sshd" "Wi
 
 # Initialize configuration
 init_config() {
+    # Ensure config directory exists
     mkdir -p "$CONFIG_DIR"
     
     if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -90,6 +91,9 @@ log_message() {
     local message="$2"
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    # Ensure log directory exists before writing
+    mkdir -p "$CONFIG_DIR"
     echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
     
     if [[ "$VERBOSE_MODE" == "true" ]]; then
@@ -107,6 +111,9 @@ add_to_history() {
     local details="$2"
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    # Ensure log directory exists before writing
+    mkdir -p "$CONFIG_DIR"
     echo "$timestamp|$action|$details" >> "$HISTORY_FILE"
     
     if [[ -f "$HISTORY_FILE" ]]; then
