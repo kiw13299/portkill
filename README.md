@@ -81,6 +81,14 @@ PortKill eliminates the frustration of port conflicts during development and sys
 - **Dry-run Mode**: Preview operations without executing them
 - **Interactive Confirmations**: Optional step-by-step confirmations for safety
 
+### Docker Integration (NEW v2.3.2)
+- **Container Detection**: Automatically discover Docker containers bound to specific ports
+- **Container Management**: Stop or force-kill containers using native Docker commands
+- **Unified Interface**: Seamlessly manage both processes and containers with single commands
+- **Interactive Confirmations**: Optional step-by-step confirmations for container operations
+- **Docker Status Awareness**: Graceful handling when Docker is unavailable
+- **History Tracking**: Log container operations alongside process activities
+
 ### Security & Scanning
 - **Port Security Scan**: Identify potentially vulnerable or suspicious services
 - **Service Detection**: Automatic service identification (HTTP, HTTPS, SSH, MySQL, etc.)
@@ -112,7 +120,7 @@ One-line installation for both macOS and Linux:
 curl -sSL https://raw.githubusercontent.com/mr-tanta/portkill/main/install.sh | bash
 
 # Install specific version
-curl -sSL https://raw.githubusercontent.com/mr-tanta/portkill/main/install.sh | bash -s v2.3.0
+curl -sSL https://raw.githubusercontent.com/mr-tanta/portkill/main/install.sh | bash -s v2.3.2
 
 # Install to custom location
 curl -sSL https://raw.githubusercontent.com/mr-tanta/portkill/main/install.sh | bash -s - --prefix=/opt/portkill
@@ -165,8 +173,8 @@ paru -S portkill
 #### Ubuntu/Debian (.deb package)
 ```bash
 # Download and install .deb package
-wget https://github.com/mr-tanta/portkill/releases/latest/download/portkill_2.3.0-1_all.deb
-sudo dpkg -i portkill_2.3.0-1_all.deb
+wget https://github.com/mr-tanta/portkill/releases/latest/download/portkill_2.3.2-1_all.deb
+sudo dpkg -i portkill_2.3.2-1_all.deb
 
 # Install dependencies if needed
 sudo apt-get install -f
@@ -175,11 +183,11 @@ sudo apt-get install -f
 #### RPM-based Distributions (RHEL/Fedora/SUSE)
 ```bash
 # Download and install RPM package
-wget https://github.com/mr-tanta/portkill/releases/latest/download/portkill-2.3.0-1.noarch.rpm
-sudo rpm -i portkill-2.3.0-1.noarch.rpm
+wget https://github.com/mr-tanta/portkill/releases/latest/download/portkill-2.3.2-1.noarch.rpm
+sudo rpm -i portkill-2.3.2-1.noarch.rpm
 
 # Or using dnf/yum
-sudo dnf install portkill-2.3.0-1.noarch.rpm
+sudo dnf install portkill-2.3.2-1.noarch.rpm
 ```
 
 ### System Requirements
@@ -211,6 +219,30 @@ portkill --interactive 8080
 
 # Preview what would be killed (dry-run)
 portkill --dry-run 3000
+
+# Include Docker containers in operations
+portkill --docker 3000
+
+# Force kill both processes and containers
+portkill --docker --force 8080
+```
+
+#### Docker Integration
+```bash
+# List processes and containers on port
+portkill --docker list 3000
+
+# Kill both processes and containers
+portkill --docker 8080
+
+# Interactive mode with containers
+portkill --docker --interactive 5432
+
+# Dry-run with Docker containers
+portkill --docker --dry-run 3000
+
+# Monitor ports including containers
+portkill --docker monitor 3000 8080
 ```
 
 #### List and Inspect Processes
@@ -338,8 +370,27 @@ npm start
 portkill 3000 8080 8081
 
 # Docker containers holding ports
-portkill 5432 6379 27017  # PostgreSQL, Redis, MongoDB
+portkill --docker 5432 6379 27017  # PostgreSQL, Redis, MongoDB containers
+
+# Mixed environment cleanup (processes + containers)
+portkill --docker 3000 8080 9000
 ```
+
+#### Docker-Specific Development
+```bash
+# Clean up stuck containers on development ports
+portkill --docker 3000    # Next.js in container
+portkill --docker 8080    # Spring Boot container
+portkill --docker 5432    # PostgreSQL container
+
+# Interactive container management
+portkill --docker --interactive 8080
+
+# Preview container operations before execution
+portkill --docker --dry-run 3000 8080 9000
+
+# Force kill stubborn containers
+portkill --docker --force 5432
 
 #### Port Conflict Resolution
 ```bash
