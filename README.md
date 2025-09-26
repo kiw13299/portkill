@@ -10,11 +10,14 @@
 
 ## Key Features
 
+- **Remote SSH Management**: Execute port operations across multiple servers via SSH (NEW v2.3.2) 🚀
+- **Docker Integration**: Native container detection and management with unified interface (NEW v2.3.2)
+- **JSON API Output**: Machine-readable structured output for automation and CI/CD (NEW v2.3.2)
+- **Performance Benchmarking**: Test connection speed, latency, and reliability (NEW v2.3.0)
 - **Intelligent Process Detection**: Advanced multi-method process identification with automatic fallbacks
-- **Safe Process Management**: Built-in protection for system-critical processes
-- **Performance Benchmarking**: Test connection speed, latency, and reliability (NEW in v2.3.0)
 - **Interactive Terminal UI**: Beautiful, intuitive interface for visual port management
 - **Process Tree Visualization**: Hierarchical display of process relationships
+- **Safe Process Management**: Built-in protection for system-critical processes
 - **Bulk Operations**: Efficiently manage multiple ports simultaneously
 - **Real-time Monitoring**: Continuous port activity surveillance
 - **Comprehensive Analytics**: Port usage history and detailed statistics
@@ -35,6 +38,18 @@ brew install portkill
 portkill 3000
 ```
 
+### Enterprise Remote Management (NEW v2.3.2)
+```bash
+# List processes on remote server
+portkill --remote user@server list 3000
+
+# Kill processes on production server
+portkill --remote deploy@prod.example.com kill 8080
+
+# Docker containers with JSON output on remote host
+portkill --remote --docker --json admin@k8s-node list 9000
+```
+
 ### Test port performance
 ```bash
 portkill benchmark 3000
@@ -48,7 +63,9 @@ portkill menu
 
 ## Overview
 
-PortKill eliminates the frustration of port conflicts during development and system administration. Instead of remembering complex command sequences like `lsof -ti:3000 | xargs kill -9`, simply run `portkill 3000`. Whether you're a developer dealing with stuck development servers, a sysadmin managing production systems, or a DevOps engineer troubleshooting network issues, PortKill provides the tools you need.
+PortKill eliminates the frustration of port conflicts during development and system administration. Instead of remembering complex command sequences like `lsof -ti:3000 | xargs kill -9`, simply run `portkill 3000`. With revolutionary remote SSH support, you can now manage ports across your entire infrastructure with commands like `portkill --remote user@server kill 8080`.
+
+Whether you're a developer dealing with stuck development servers, a sysadmin managing production systems, or a DevOps engineer orchestrating containerized applications across multiple servers, PortKill provides enterprise-grade tools that no other port management solution offers.
 
 ## Features
 
@@ -88,6 +105,24 @@ PortKill eliminates the frustration of port conflicts during development and sys
 - **Interactive Confirmations**: Optional step-by-step confirmations for container operations
 - **Docker Status Awareness**: Graceful handling when Docker is unavailable
 - **History Tracking**: Log container operations alongside process activities
+
+### Remote SSH Support (NEW v2.3.2) 🚀
+- **Cross-Server Management**: Execute port operations on remote servers via SSH
+- **Enterprise DevOps Ready**: Manage processes across entire infrastructure from single command
+- **SSH Key Authentication**: Secure, automated authentication with proper timeout handling
+- **Remote Process Discovery**: Full process detection using remote lsof/netstat/fuser commands
+- **Interactive Remote Operations**: Confirm actions on remote servers with detailed context
+- **JSON Remote Output**: Machine-readable data from remote server operations
+- **Error Recovery**: Comprehensive error handling and connectivity diagnostics
+- **No Remote Installation**: Works with native Unix commands if PortKill isn't on target server
+
+### JSON API Output (NEW v2.3.2)
+- **Machine-Readable Format**: Structured JSON output for automation and integration
+- **API Integration Ready**: Perfect for CI/CD pipelines and enterprise tooling
+- **Complete Process Data**: Full process details including PID, user, command, cmdline
+- **Docker Container Support**: JSON output includes container ID, name, and port mappings
+- **Remote Operation Support**: JSON output works seamlessly with remote SSH operations
+- **Proper Data Escaping**: Safe handling of special characters and control sequences
 
 ### Security & Scanning
 - **Port Security Scan**: Identify potentially vulnerable or suspicious services
@@ -245,6 +280,56 @@ portkill --docker --dry-run 3000
 portkill --docker monitor 3000 8080
 ```
 
+#### Remote SSH Support (NEW v2.3.2) 🚀
+```bash
+# List processes on remote server
+portkill --remote user@server list 3000
+
+# Kill processes on production server
+portkill --remote deploy@prod.example.com kill 8080
+
+# Force kill with confirmation on remote server
+portkill --remote --interactive --force admin@db-server 5432
+
+# Dry-run to preview remote operations
+portkill --remote --dry-run ops@staging kill 9000
+
+# JSON output from remote server for automation
+portkill --remote --json monitoring@app-server list 3000
+
+# Combined Docker + Remote + JSON operations
+portkill --remote --docker --json deploy@k8s-worker list 8080
+
+# Multiple remote servers (use in scripts)
+for server in web-01 web-02 web-03; do
+  portkill --remote deploy@$server kill 8080
+done
+```
+
+#### JSON API Output (NEW v2.3.2)
+```bash
+# JSON output for process listing
+portkill --json list 3000
+
+# JSON output with Docker containers
+portkill --docker --json list 8080
+
+# JSON output from remote server
+portkill --remote --json user@server list 3000
+
+# Pipe JSON output to jq for processing
+portkill --json list 3000 | jq '.processes[].pid'
+
+# Use in CI/CD pipelines
+PROCESSES=$(portkill --json list 8080)
+echo $PROCESSES | jq -r '.processes | length' # Count processes
+
+# Integration with monitoring systems
+curl -X POST -H "Content-Type: application/json" \
+  -d "$(portkill --remote --json monitor@prod list 3000)" \
+  https://monitoring.example.com/api/processes
+```
+
 #### List and Inspect Processes
 ```bash
 # List processes on specific port
@@ -391,6 +476,110 @@ portkill --docker --dry-run 3000 8080 9000
 
 # Force kill stubborn containers
 portkill --docker --force 5432
+```
+
+### Enterprise Remote SSH Operations (NEW v2.3.2) 🚀
+
+#### Multi-Server Infrastructure Management
+```bash
+# Kill stuck processes across web tier
+for server in web-01 web-02 web-03; do
+  portkill --remote deploy@$server kill 8080
+done
+
+# Audit processes across database cluster
+for db in db-primary db-replica-01 db-replica-02; do
+  echo "=== $db ==="
+  portkill --remote --json dba@$db list 5432 | jq -r '.processes[] | "\(.pid): \(.user) - \(.command)"'
+done
+
+# Emergency process termination on production
+portkill --remote --interactive --force ops@prod-app-server kill 9000
+
+# Graceful service restart across load balancer pool
+for server in app-{01..05}; do
+  portkill --remote deploy@$server --dry-run kill 8080  # Preview first
+  portkill --remote deploy@$server kill 8080           # Then execute
+  ssh deploy@$server "systemctl start myapp"           # Restart service
+done
+```
+
+#### DevOps Automation & CI/CD Integration
+```bash
+# Deployment script with process cleanup
+#!/bin/bash
+HOST="deploy@$1"
+PORT="$2"
+
+# Check what's running before deployment
+echo "Current processes on $HOST:$PORT:"
+portkill --remote --json $HOST list $PORT | jq '.processes | length'
+
+# Clean up old processes
+if [[ $(portkill --remote --json $HOST list $PORT | jq '.processes | length') -gt 0 ]]; then
+  portkill --remote $HOST kill $PORT
+fi
+
+# Deploy new version
+ssh $HOST "docker-compose up -d"
+
+# Verify deployment
+sleep 5
+portkill --remote --json $HOST list $PORT | jq -r '.processes[] | "New PID: \(.pid)"'
+```
+
+#### Kubernetes & Container Orchestration
+```bash
+# Check processes on Kubernetes worker nodes
+for node in k8s-worker-{01..10}; do
+  echo "=== $node ==="
+  portkill --remote --docker --json admin@$node list 8080 | jq -r '.processes[] | select(.type=="container") | "\(.name): \(.container_id[0:12])"'
+done
+
+# Emergency container cleanup on specific node
+portkill --remote --docker --force admin@k8s-worker-03 kill 9000
+
+# Audit container processes across cluster
+kubectl get nodes -o name | cut -d/ -f2 | while read node; do
+  portkill --remote --docker --json admin@$node list 8080 > "/tmp/audit-$node.json"
+done
+```
+
+#### Database Administration & Monitoring
+```bash
+# Monitor database connections across replicas
+for db in postgres-{master,slave1,slave2}; do
+  CONNECTIONS=$(portkill --remote --json postgres@$db list 5432 | jq '.processes | length')
+  echo "$db: $CONNECTIONS active connections"
+done
+
+# Emergency connection cleanup on overloaded server
+portkill --remote --interactive postgres@db-server "kill processes consuming >90% CPU"
+
+# Scheduled connection audit (use in cron)
+portkill --remote --json monitoring@postgres-master list 5432 | \
+  jq '{host: .host, port: .port, connection_count: (.processes | length), timestamp: .timestamp}' | \
+  curl -X POST -H "Content-Type: application/json" -d @- http://monitoring.internal/api/db-metrics
+```
+
+#### Security & Incident Response
+```bash
+# Rapid incident response - kill suspicious processes across infrastructure
+for server in $(cat compromised-servers.txt); do
+  echo "Cleaning up $server..."
+  portkill --remote --force root@$server kill 4444 31337 1337  # Common backdoor ports
+done
+
+# Security audit - find processes running on non-standard ports
+for server in prod-web-{01..20}; do
+  portkill --remote --json security@$server list 1337 | \
+    jq -r 'select(.processes | length > 0) | "ALERT: \(.host) has processes on port \(.port)"'
+done
+
+# Forensic analysis - capture process information before termination
+portkill --remote --json forensics@suspect-server list 8080 > evidence-$(date +%Y%m%d).json
+portkill --remote forensics@suspect-server kill 8080
+```
 
 #### Port Conflict Resolution
 ```bash
