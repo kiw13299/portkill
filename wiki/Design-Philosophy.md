@@ -2,7 +2,7 @@
 
 PortKill's design philosophy is rooted in the Unix tradition of creating tools that do one thing exceptionally well. This document explains the principles that guide PortKill's development and the strategic decision to embrace simplicity over complexity.
 
-## 🎯 Core Principles
+## ## Core Principles
 
 ### 1. Do One Thing Well
 
@@ -11,10 +11,10 @@ PortKill's design philosophy is rooted in the Unix tradition of creating tools t
 PortKill exists to solve one specific problem: **killing processes on ports efficiently and reliably**. Every feature, every line of code, and every design decision is evaluated against this primary goal.
 
 #### What This Means:
-- ✅ **Focus**: Port management is the sole responsibility
-- ✅ **Excellence**: Do port management better than any alternative
-- ✅ **Reliability**: Simple code means fewer bugs and edge cases
-- ❌ **Feature Creep**: Resist adding tangential functionality
+- **Focus**: Port management is the sole responsibility
+- **Excellence**: Do port management better than any alternative
+- **Reliability**: Simple code means fewer bugs and edge cases
+- **Feature Creep**: Resist adding tangential functionality
 
 ### 2. Zero Dependencies Philosophy
 
@@ -27,7 +27,7 @@ In modern software development, dependency hell is a real problem. Tools that re
 **PortKill's approach**: Pure Bash with standard Unix utilities that exist everywhere.
 
 #### Benefits:
-- 🚀 **Instant startup**: No runtime initialization overhead
+- **Instant startup**: No runtime initialization overhead
 - 🔒 **Security**: Minimal attack surface
 - 📦 **Portability**: Works on any Unix-like system
 - ⚡ **Performance**: No abstraction layers
@@ -76,7 +76,7 @@ While embracing simplicity, PortKill remains approachable:
 - **Clear output**: Human-readable by default
 - **Interactive mode**: Menu for exploratory use
 
-## 🏗️ Architectural Decisions
+## ## Architectural Decisions
 
 ### Single File Design
 
@@ -250,7 +250,7 @@ We measure success by:
 4. **Performance**: Startup time and resource usage
 5. **User Satisfaction**: Feedback and testimonials
 
-## 📚 Influences
+## ## Influences
 
 PortKill's philosophy is influenced by:
 

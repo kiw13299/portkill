@@ -29,7 +29,7 @@ brew uninstall portkill
 brew untap mr-tanta/portkill
 ```
 
-## 🌐 Quick Install Script (macOS & Linux)
+## ## Quick Install Script (macOS & Linux)
 
 One-line installation for both macOS and Linux:
 
@@ -146,7 +146,7 @@ which lsof ps kill netstat
 which docker bc curl
 ```
 
-## ✅ Verification
+## - Verification
 
 After installation, verify PortKill is working correctly:
 

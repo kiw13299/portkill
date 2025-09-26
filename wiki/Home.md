@@ -2,7 +2,7 @@
 
 Welcome to the comprehensive PortKill documentation! PortKill is a lightweight, zero-dependency port management tool that follows the Unix philosophy of "do one thing and do it well."
 
-## 🚀 Quick Navigation
+## Quick Navigation
 
 ### Getting Started
 - [Installation Guide](Installation.md) - How to install PortKill
@@ -40,7 +40,7 @@ Welcome to the comprehensive PortKill documentation! PortKill is a lightweight, 
 - [Design Philosophy](Design-Philosophy.md) - Why we chose simplicity
 - [Version History](Version-History.md) - Changes and evolution
 
-## 📊 PortKill at a Glance
+## PortKill at a Glance
 
 | Metric | Value |
 |--------|--------|
@@ -67,11 +67,11 @@ PortKill follows the Unix philosophy:
 
 In an era of bloated tools requiring multiple dependencies, PortKill stands out by:
 
-- ✅ **Zero Dependencies** - Pure Bash, no Python/Node.js/Go required
-- ✅ **Lightweight** - 200x smaller than alternatives
-- ✅ **Reliable** - Simple code means fewer bugs
-- ✅ **Portable** - Works anywhere Bash exists
-- ✅ **Fast** - No startup overhead from heavy runtimes
+- **Zero Dependencies** - Pure Bash, no Python/Node.js/Go required
+- **Lightweight** - 200x smaller than alternatives
+- **Reliable** - Simple code means fewer bugs
+- **Portable** - Works anywhere Bash exists
+- **Fast** - No startup overhead from heavy runtimes
 
 ## 📈 Use Cases
 
@@ -104,7 +104,7 @@ In an era of bloated tools requiring multiple dependencies, PortKill stands out 
 | Installation | Single file | Package managers |
 | Reliability | Rock solid | Dependency issues |
 
-## 📚 Additional Resources
+## Additional Resources
 
 - [GitHub Repository](https://github.com/mr-tanta/portkill)
 - [Issue Tracker](https://github.com/mr-tanta/portkill/issues)

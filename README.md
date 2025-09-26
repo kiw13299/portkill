@@ -1129,9 +1129,9 @@ copies of the Software...
 - GitHub: [@mr-tanta](https://github.com/mr-tanta)
 - Email: [Contact via GitHub](https://github.com/mr-tanta)
 
-## 📞 Support & Community
+##  Support & Community
 
-### 🐛 Bug Reports & Feature Requests
+### Bug Reports & Feature Requests
 
 - **Issues**: [GitHub Issue Tracker](https://github.com/mr-tanta/portkill/issues)
 - **Features**: [Feature Request Template](https://github.com/mr-tanta/portkill/issues/new?template=feature_request.md)
@@ -1154,13 +1154,13 @@ copies of the Software...
 
 <div align="center">
 
-## ⭐ Star History
+## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=mr-tanta/portkill&type=Date)](https://star-history.com/#mr-tanta/portkill&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=mr-tanta/portkill&type=Date)](https://www.star-history.com/#mr-tanta/portkill&Date)
 
 ---
 
-### 🎆 **Made with ❤️ by developers, for developers**
+### **Made with ❤️ by developers, for developers**
 
 **PortKill** - *Because port conflicts shouldn't slow you down*
 

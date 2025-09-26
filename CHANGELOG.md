@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.0.0] - 2024-09-26
 
-### 🎯 SIMPLIFICATION RELEASE - "Back to Unix Roots"
+### SIMPLIFICATION RELEASE - "Back to Unix Roots"
 
 **STRATEGIC DECISION**: PortKill returns to its core mission of reliable port management without bloat.
 
@@ -18,22 +18,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Foundation for Growth**: Clean base for future three-tier strategy
 
 ### Removed (Intentionally)
-- ❌ **Web Dashboard**: Removed Python dependency and 400+ lines of complexity
-- ❌ **WebSocket Support**: Eliminated real-time infrastructure overhead
-- ❌ **Remote SSH Operations**: Simplified to focus on local port management
-- ❌ **Complex JSON API**: Streamlined to essential structured output
+- **Web Dashboard**: Removed Python dependency and 400+ lines of complexity
+- **WebSocket Support**: Eliminated real-time infrastructure overhead
+- **Remote SSH Operations**: Simplified to focus on local port management
+- **Complex JSON API**: Streamlined to essential structured output
 
 ### Enhanced Core Features
-- ✅ **Lightweight**: Reduced from 3,371 to 2,106 lines (38% smaller)
-- ✅ **Zero Dependencies**: No Python, Node.js, or external runtimes required
-- ✅ **Faster Startup**: Instant execution, no runtime initialization overhead
-- ✅ **Docker Integration**: Maintained container management capabilities
-- ✅ **Simple JSON Output**: Clean, readable structured data when needed
-- ✅ **Process Safety**: Preserved system process protection
-- ✅ **Interactive Menu**: Kept user-friendly terminal interface
-- ✅ **Performance Benchmarking**: Retained port connectivity testing
-- ✅ **Security Scanning**: Maintained vulnerability detection
-- ✅ **Process Trees**: Preserved hierarchical process visualization
+- **Lightweight**: Reduced from 3,371 to 2,106 lines (38% smaller)
+- **Zero Dependencies**: No Python, Node.js, or external runtimes required
+- **Faster Startup**: Instant execution, no runtime initialization overhead
+- **Docker Integration**: Maintained container management capabilities
+- **Simple JSON Output**: Clean, readable structured data when needed
+- **Process Safety**: Preserved system process protection
+- **Interactive Menu**: Kept user-friendly terminal interface
+- **Performance Benchmarking**: Retained port connectivity testing
+- **Security Scanning**: Maintained vulnerability detection
+- **Process Trees**: Preserved hierarchical process visualization
 
 ### Technical Improvements
 - **Size Reduction**: 72KB total (200x smaller than Rust alternatives)
@@ -44,10 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Reliability**: Fewer dependencies = fewer failure points
 
 ### New Documentation
-- 📚 **Comprehensive Wiki**: Installation, philosophy, comparisons
-- 🎯 **Design Philosophy**: Explains strategic simplification rationale
-- 📊 **Tool Comparison**: Detailed analysis vs alternatives
-- 🏗️ **Architecture Guide**: Clean, function-based design
+- **Comprehensive Wiki**: Installation, philosophy, comparisons
+- **Design Philosophy**: Explains strategic simplification rationale
+- **Tool Comparison**: Detailed analysis vs alternatives
+- **Architecture Guide**: Clean, function-based design
 
 ### Strategic Positioning
 - **PortKill Core** (this version): Zero-dependency reliability for developers
@@ -80,10 +80,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.3.2] - 2024-12-21
 
-### 🚀 ENTERPRISE TRANSFORMATION RELEASE
+### ENTERPRISE TRANSFORMATION RELEASE
 
 ### Added
-- **🌐 Revolutionary Remote SSH Support**: Industry-first cross-server port management
+- **Revolutionary Remote SSH Support**: Industry-first cross-server port management
   - `--remote user@server` flag for SSH-based remote operations
   - Complete process listing and termination across remote hosts
   - SSH key authentication with proper timeout handling
@@ -95,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - History tracking for all remote operations
   - No competitor has this capability!
 
-- **🐳 Complete Docker Integration**: Native container management
+- **Complete Docker Integration**: Native container management
   - Automatic detection of Docker containers bound to specific ports
   - Container termination using native Docker commands (`docker stop`/`docker kill`)
   - `--docker` flag to enable Docker mode for all operations
@@ -105,7 +105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - History tracking for container operations
   - Graceful handling when Docker is unavailable
 
-- **📊 JSON API Output**: Enterprise-grade machine-readable output
+- **JSON API Output**: Enterprise-grade machine-readable output
   - `--json` flag for structured data output with proper escaping
   - Complete process data: PID, user, command, cmdline, protected status
   - Docker container support: container_id, name, ports, type
@@ -126,7 +126,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Consistent logging and history tracking for Docker operations
 - Enhanced CLI help text to document Docker integration
 
-### 🏆 Competitive Advantages Achieved
+### Competitive Advantages Achieved
 - **INDUSTRY FIRST**: Only port management tool with remote SSH support
 - **ENTERPRISE READY**: Docker + Remote + JSON = Complete DevOps solution
 - **INFRASTRUCTURE SCALE**: Manage ports across entire server fleets
