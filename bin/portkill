@@ -39,8 +39,6 @@ MONITORING_INTERVAL=2
 HISTORY_LIMIT=50
 DOCKER_MODE=false
 JSON_OUTPUT=false
-REMOTE_HOST=""
-# LAST_SCAN_TIME=0 # Reserved for future use - disabled to avoid ShellCheck warning
 
 # Protected system processes
 declare -a PROTECTED_PROCESSES=("launchd" "kernel_task" "systemstats" "sshd" "WindowServer" "loginwindow")
@@ -172,88 +170,47 @@ show_section_header() {
 }
 
 # JSON output utility functions
-escape_json_string() {
-    local string="$1"
-    # Escape quotes, backslashes, and control characters for JSON
-    echo "$string" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\n/\\n/g; s/\r/\\r/g'
-}
 
-output_json() {
-    local json_content="$1"
-    if [[ "$JSON_OUTPUT" == "true" ]]; then
-        echo "$json_content"
-    fi
-}
-
-generate_process_json() {
+output_simple_json() {
     local port="$1"
     local pids="$2"
-    local docker_containers="$3"
-    local service_name
-    service_name=$(get_service_name "$port")
-    
-    local json="{"
-    json+='"port": '"$port"','
-    json+='"service": "'"$(escape_json_string "$service_name")"'",'
-    json+='"timestamp": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'",'
-    json+='"processes": ['
-    
-    local first_process=true
+
+    if [[ "$JSON_OUTPUT" != "true" ]]; then
+        return
+    fi
+
+    echo "{"
+    echo "  \"port\": $port,"
+    echo "  \"processes\": ["
+
+    local first=true
     if [[ -n "$pids" ]]; then
         while read -r pid; do
             if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
-                if [[ "$first_process" == "false" ]]; then
-                    json+=','
+                if [[ "$first" != "true" ]]; then
+                    echo "    ,"
                 fi
-                first_process=false
-                
+                first=false
+
                 local info
                 info=$(get_process_info "$pid")
-                local user
-                user=$(echo "$info" | awk '{print $1}')
-                local command
-                command=$(echo "$info" | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/ $//')
-                local cmdline
-                cmdline=$(get_process_cmdline "$pid")
-                
-                json+='{'
-                json+='"type": "process",'
-                json+='"pid": '"$pid"','
-                json+='"user": "'"$(escape_json_string "$user")"'",'
-                json+='"command": "'"$(escape_json_string "$command")"'",'
-                json+='"cmdline": "'"$(escape_json_string "$cmdline")"'"'
-                
-                if is_protected_process "$command"; then
-                    json+=',"protected": true'
-                fi
-                
-                json+='}'
+                local user="${info%% *}"
+                local command="${info#* }"
+
+                echo "    {"
+                echo "      \"pid\": $pid,"
+                echo "      \"user\": \"$user\","
+                echo "      \"command\": \"$command\""
+                echo -n "    }"
             fi
         done <<< "$pids"
     fi
-    
-    # Add Docker containers if available
-    if [[ -n "$docker_containers" ]]; then
-        while IFS='|' read -r container_id container_name ports; do
-            if [[ -n "$container_id" ]]; then
-                if [[ "$first_process" == "false" ]]; then
-                    json+=','
-                fi
-                first_process=false
-                
-                json+='{'
-                json+='"type": "container",'
-                json+='"container_id": "'"$(escape_json_string "$container_id")"'",'
-                json+='"name": "'"$(escape_json_string "$container_name")"'",'
-                json+='"ports": "'"$(escape_json_string "$ports")"'"'
-                json+='}'
-            fi
-        done <<< "$docker_containers"
-    fi
-    
-    json+=']}'
-    echo "$json"
+
+    echo ""
+    echo "  ]"
+    echo "}"
 }
+
 
 # Port validation
 validate_port() {
@@ -330,357 +287,6 @@ get_service_name() {
     esac
 }
 
-# Remote SSH integration functions
-validate_remote_host() {
-    local host="$1"
-    
-    # Check if host format is valid (user@host or just host)
-    if [[ ! "$host" =~ ^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+$ ]] && [[ ! "$host" =~ ^[a-zA-Z0-9._-]+$ ]]; then
-        print_colored "$RED" "[!]" "Invalid remote host format: $host (expected: user@host or host)"
-        return 1
-    fi
-    
-    return 0
-}
-
-check_ssh_connectivity() {
-    local host="$1"
-    
-    if ! command -v ssh &> /dev/null; then
-        print_colored "$RED" "[!]" "SSH client not available - install openssh-client"
-        return 1
-    fi
-    
-    # Test SSH connectivity with timeout
-    if ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no "$host" "echo 'SSH_OK'" 2>/dev/null | grep -q "SSH_OK"; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-test_remote_portkill() {
-    local host="$1"
-    
-    # Check if PortKill is available on remote host
-    local remote_result
-    remote_result=$(ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no "$host" "command -v portkill || which portkill || echo 'NOT_FOUND'" 2>/dev/null)
-    
-    if [[ "$remote_result" == "NOT_FOUND" ]] || [[ -z "$remote_result" ]]; then
-        print_colored "$YELLOW" "[!]" "PortKill not found on remote host $host"
-        print_colored "$CYAN" "[i]" "Will use native commands (lsof, kill, ps) on remote host"
-        return 1
-    else
-        print_colored "$GREEN" "[✓]" "PortKill available on remote host: $remote_result"
-        return 0
-    fi
-}
-
-execute_remote_command() {
-    local host="$1"
-    local command="$2"
-    local timeout="${3:-30}"
-    
-    # Execute command on remote host with timeout
-    ssh -o ConnectTimeout=5 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
-        -o BatchMode=yes -o StrictHostKeyChecking=no \
-        "$host" "timeout $timeout bash -c '$command'" 2>/dev/null
-}
-
-find_remote_processes_on_port() {
-    local host="$1"
-    local port="$2"
-    
-    # Try lsof first, then netstat, then fuser on remote host
-    local remote_command
-    remote_command='pids=""
-    if command -v lsof &> /dev/null; then
-        pids=$(lsof -ti ":'"$port"'" 2>/dev/null || true)
-    fi
-    if [[ -z "$pids" ]] && command -v netstat &> /dev/null; then
-        pids=$(netstat -anv 2>/dev/null | grep ":"'"$port"'" " | awk "{print \$9}" | cut -d"." -f1 2>/dev/null || true)
-    fi
-    if [[ -z "$pids" ]] && command -v fuser &> /dev/null; then
-        pids=$(fuser "'"$port"'/tcp" 2>/dev/null | tr -s " " | cut -d" " -f2- || true)
-    fi
-    echo "$pids"'
-    
-    execute_remote_command "$host" "$remote_command"
-}
-
-get_remote_process_info() {
-    local host="$1"
-    local pid="$2"
-    
-    execute_remote_command "$host" "ps -p $pid -o user=,comm= 2>/dev/null || echo 'unknown unknown'"
-}
-
-get_remote_process_cmdline() {
-    local host="$1"
-    local pid="$2"
-    
-    execute_remote_command "$host" "if [[ -r /proc/$pid/cmdline ]]; then tr '\\0' ' ' < /proc/$pid/cmdline 2>/dev/null; else ps -p $pid -o args= 2>/dev/null || echo 'N/A'; fi"
-}
-
-kill_remote_process() {
-    local host="$1"
-    local pid="$2"
-    local signal="${3:-TERM}"
-    
-    execute_remote_command "$host" "kill -$signal $pid 2>/dev/null"
-}
-
-generate_remote_process_json() {
-    local host="$1"
-    local port="$2"
-    local pids="$3"
-    
-    local json="{"
-    json+='"host": "'"$(escape_json_string "$host")"'",'
-    json+='"port": '"$port"','
-    json+='"service": "'"$(escape_json_string "$(get_service_name "$port")")"'",'
-    json+='"timestamp": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'",'
-    json+='"processes": ['
-    
-    local first_process=true
-    if [[ -n "$pids" ]]; then
-        while read -r pid; do
-            if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
-                if [[ "$first_process" == "false" ]]; then
-                    json+=','
-                fi
-                first_process=false
-                
-                local info
-                info=$(get_remote_process_info "$host" "$pid")
-                local user
-                user=$(echo "$info" | awk '{print $1}')
-                local command
-                command=$(echo "$info" | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/ $//')
-                local cmdline
-                cmdline=$(get_remote_process_cmdline "$host" "$pid")
-                
-                json+='{'
-                json+='"type": "process",'
-                json+='"pid": '"$pid"','
-                json+='"user": "'"$(escape_json_string "$user")"'",'
-                json+='"command": "'"$(escape_json_string "$command")"'",'
-                json+='"cmdline": "'"$(escape_json_string "$cmdline")"'"'
-                json+='}'
-            fi
-        done <<< "$pids"
-    fi
-    
-    json+=']}'
-    echo "$json"
-}
-
-# Remote process listing function
-list_remote_processes() {
-    local host="$1"
-    local port="$2"
-    local detailed="${3:-false}"
-    
-    # Validate remote host format
-    if ! validate_remote_host "$host"; then
-        return 1
-    fi
-    
-    # Test SSH connectivity
-    if ! check_ssh_connectivity "$host"; then
-        print_colored "$RED" "[!]" "Failed to connect to remote host: $host"
-        print_colored "$CYAN" "[i]" "Ensure SSH keys are configured or use ssh-agent"
-        return 1
-    fi
-    
-    # Optional: Test if PortKill is available on remote host
-    test_remote_portkill "$host" || true
-    
-    # Find processes on remote host
-    local pids
-    pids=$(find_remote_processes_on_port "$host" "$port")
-    
-    # Handle empty results
-    if [[ -z "$pids" ]]; then
-        if [[ "$JSON_OUTPUT" == "true" ]]; then
-            local empty_json
-            empty_json=$(generate_remote_process_json "$host" "$port" "")
-            output_json "$empty_json"
-        else
-            print_colored "$YELLOW" "[i]" "No processes found on port $port at $host"
-        fi
-        return 0
-    fi
-    
-    # Display results
-    if [[ "$JSON_OUTPUT" == "true" ]]; then
-        local process_json
-        process_json=$(generate_remote_process_json "$host" "$port" "$pids")
-        output_json "$process_json"
-    else
-        local service_name; service_name=$(get_service_name "$port")
-        if [[ -n "$service_name" ]]; then
-            print_colored "$BLUE" "[+]" "Remote Host: $host - Port $port ($service_name) - Active Processes:"
-        else
-            print_colored "$BLUE" "[+]" "Remote Host: $host - Port $port - Active Processes:"
-        fi
-        echo
-        
-        local count=0
-        while read -r pid; do
-            if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
-                ((count++))
-                
-                if [[ "$detailed" == "true" ]]; then
-                    local info; info=$(get_remote_process_info "$host" "$pid")
-                    local cmdline; cmdline=$(get_remote_process_cmdline "$host" "$pid")
-                    
-                    echo -e "  ${BOLD}Process #$count${NC}"
-                    echo -e "    PID: ${YELLOW}$pid${NC}"
-                    echo -e "    Info: $info"
-                    echo -e "    Command: ${CYAN}$(echo "$cmdline" | cut -c1-80)${NC}"
-                    echo
-                else
-                    local info; info=$(get_remote_process_info "$host" "$pid")
-                    local user; user=$(echo "$info" | awk '{print $1}')
-                    local command; command=$(echo "$info" | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/ $//')
-                    
-                    printf "  ${YELLOW}%-8s${NC} ${CYAN}%-15s${NC} ${WHITE}%-30s${NC} %s\n" \
-                        "PID $pid" "$user" "$command" "${MAGENTA}[REMOTE]${NC}"
-                fi
-            fi
-        done <<< "$pids"
-        
-        echo
-        print_colored "$GREEN" "[i]" "Found $count process(es) on remote port $port at $host"
-    fi
-    
-    add_to_history "REMOTE_LIST" "Host: $host, Port: $port, Detailed: $detailed"
-}
-
-# Remote process killing function
-kill_remote_processes() {
-    local host="$1"
-    local port="$2"
-    local force="${3:-false}"
-    local dry_run="${4:-false}"
-    local interactive="${5:-false}"
-    local signal_name="SIGTERM"
-    local signal_num=15
-    local killed_count=0
-    local failed_count=0
-    
-    # Validate remote host format
-    if ! validate_remote_host "$host"; then
-        return 1
-    fi
-    
-    # Test SSH connectivity
-    if ! check_ssh_connectivity "$host"; then
-        print_colored "$RED" "[!]" "Failed to connect to remote host: $host"
-        return 1
-    fi
-    
-    if [[ "$force" == "true" ]]; then
-        signal_name="SIGKILL"
-        signal_num=9
-    fi
-    
-    # Find processes on remote host
-    local pids
-    pids=$(find_remote_processes_on_port "$host" "$port")
-    
-    # Handle empty results
-    if [[ -z "$pids" ]]; then
-        print_colored "$YELLOW" "[i]" "No processes found on port $port at remote host $host"
-        return 0
-    fi
-    
-    local service_name; service_name=$(get_service_name "$port")
-    if [[ -n "$service_name" ]]; then
-        print_colored "$BLUE" "[>]" "Remote Host: $host - Port $port ($service_name) - Processing..."
-    else
-        print_colored "$BLUE" "[>]" "Remote Host: $host - Port $port - Processing..."
-    fi
-    echo
-    
-    # Process each PID
-    while read -r pid; do
-        if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
-            local info; info=$(get_remote_process_info "$host" "$pid")
-            local user; user=$(echo "$info" | awk '{print $1}')
-            local command; command=$(echo "$info" | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/ $//')
-            
-            # Interactive confirmation
-            if [[ "$interactive" == "true" && "$AUTO_CONFIRM" != "true" ]]; then
-                echo -ne "${WHITE}Kill remote process ${YELLOW}$pid${WHITE} (${CYAN}$command${WHITE}) at ${MAGENTA}$host${WHITE} with ${RED}$signal_name${WHITE}? (y/N/q): ${NC}"
-                read -r response
-                case "$response" in
-                    [Yy]) ;;
-                    [Qq]) print_colored "$GRAY" "[i]" "Operation cancelled"; return 0 ;;
-                    *) print_colored "$GRAY" "[i]" "Skipped PID $pid"; continue ;;
-                esac
-            fi
-            
-            if [[ "$dry_run" == "true" ]]; then
-                print_colored "$BLUE" "[i]" "DRY RUN: Would kill remote PID $pid ($command) on $host:$port with $signal_name"
-                ((killed_count++))
-            else
-                # Attempt to kill remote process
-                if kill_remote_process "$host" "$pid" "$signal_name"; then
-                    # Verify process was killed (check if still running)
-                    sleep 1
-                    local check_result
-                    check_result=$(execute_remote_command "$host" "ps -p $pid > /dev/null 2>&1 && echo STILL_RUNNING || echo KILLED")
-                    
-                    if [[ "$check_result" == "KILLED" ]]; then
-                        if [[ "$force" == "true" ]]; then
-                            print_colored "$RED" "[x]" "Force killed remote PID $pid ($command) on $host:$port"
-                        else
-                            print_colored "$GREEN" "[✓]" "Terminated remote PID $pid ($command) on $host:$port"
-                        fi
-                        ((killed_count++))
-                        add_to_history "REMOTE_KILL" "Host: $host, Port: $port, PID: $pid, Process: $command, Signal: $signal_name"
-                        log_message "INFO" "Killed remote process $pid ($command) on $host:$port with $signal_name"
-                    else
-                        # Process still running, try force kill if not already forced
-                        if [[ "$force" != "true" && "$signal_name" == "SIGTERM" ]]; then
-                            if kill_remote_process "$host" "$pid" "SIGKILL"; then
-                                print_colored "$RED" "[x]" "Force killed remote PID $pid ($command) on $host:$port"
-                                ((killed_count++))
-                                add_to_history "REMOTE_KILL" "Host: $host, Port: $port, PID: $pid, Process: $command, Signal: SIGKILL"
-                            else
-                                print_colored "$RED" "[!]" "Failed to kill remote PID $pid on $host:$port"
-                                ((failed_count++))
-                            fi
-                        else
-                            print_colored "$RED" "[!]" "Failed to kill remote PID $pid on $host:$port"
-                            ((failed_count++))
-                        fi
-                    fi
-                else
-                    print_colored "$RED" "[!]" "Failed to execute kill command on remote host $host for PID $pid"
-                    ((failed_count++))
-                fi
-            fi
-        fi
-    done <<< "$pids"
-    
-    echo
-    if [[ "$dry_run" == "true" ]]; then
-        print_colored "$BLUE" "[i]" "DRY RUN: Would process $killed_count remote process(es) on $host:$port"
-    else
-        if [[ $killed_count -gt 0 ]]; then
-            print_colored "$GREEN" "[✓]" "Successfully processed $killed_count remote process(es) on $host:$port"
-        fi
-        if [[ $failed_count -gt 0 ]]; then
-            print_colored "$RED" "[!]" "Failed to process $failed_count remote process(es) on $host:$port"
-        fi
-    fi
-    
-    add_to_history "REMOTE_KILL_SESSION" "Host: $host, Port: $port, Killed: $killed_count, Failed: $failed_count"
-}
-
 # Docker integration functions
 check_docker_available() {
     command -v docker &> /dev/null && docker info &> /dev/null
@@ -747,14 +353,30 @@ kill_docker_container_by_port() {
     return $killed_count
 }
 
-# Find processes on port
+# Cache for lsof output to improve performance for bulk operations
+LSOF_CACHE=""
+LSOF_CACHE_TIME=0
+
+# Find processes on port with basic caching
 find_processes_on_port() {
     local port="$1"
     local pids=""
-    
-    # Try lsof first (most reliable)
+    local current_time
+    current_time=$(date +%s)
+
+    # Try lsof first (most reliable) with basic caching
     if command -v lsof &> /dev/null; then
-        pids=$(lsof -ti ":$port" 2>/dev/null || true)
+        # Use cache if it's less than 2 seconds old (for bulk operations)
+        if [[ -n "$LSOF_CACHE" && $((current_time - LSOF_CACHE_TIME)) -lt 2 ]]; then
+            pids=$(echo "$LSOF_CACHE" | grep ":$port " | awk '{print $2}' || true)
+        else
+            # Refresh cache with full lsof output
+            LSOF_CACHE=$(lsof -i -n -P 2>/dev/null || true)
+            LSOF_CACHE_TIME=$current_time
+
+            # Extract PIDs for this specific port
+            pids=$(lsof -ti ":$port" 2>/dev/null || true)
+        fi
     fi
     
     # Fallback to netstat
@@ -1024,11 +646,6 @@ list_processes() {
     local pids
     local docker_containers
     
-    # Handle remote execution if REMOTE_HOST is set
-    if [[ -n "$REMOTE_HOST" ]]; then
-        list_remote_processes "$REMOTE_HOST" "$port" "$detailed"
-        return $?
-    fi
     
     # Check for regular processes
     pids=$(find_processes_on_port "$port" 2>/dev/null || true)
@@ -1041,9 +658,7 @@ list_processes() {
     # If neither processes nor containers found
     if [[ -z "$pids" && -z "$docker_containers" ]]; then
         if [[ "$JSON_OUTPUT" == "true" ]]; then
-            local empty_json
-            empty_json=$(generate_process_json "$port" "" "")
-            output_json "$empty_json"
+            output_simple_json "$port" ""
         else
             if [[ "$DOCKER_MODE" == "true" ]]; then
                 print_colored "$YELLOW" "[i]" "No processes or Docker containers found on port $port"
@@ -1151,9 +766,7 @@ list_processes() {
     
     # Output results
     if [[ "$JSON_OUTPUT" == "true" ]]; then
-        local process_json
-        process_json=$(generate_process_json "$port" "$pids" "$docker_containers")
-        output_json "$process_json"
+        output_simple_json "$port" "$pids"
     else
         if [[ $count -eq 0 ]]; then
             print_colored "$YELLOW" "[i]" "No valid processes or containers found"
@@ -1212,11 +825,6 @@ kill_processes() {
     local dry_run="${3:-false}"
     local interactive="${4:-false}"
     
-    # Handle remote execution if REMOTE_HOST is set
-    if [[ -n "$REMOTE_HOST" ]]; then
-        kill_remote_processes "$REMOTE_HOST" "$port" "$force" "$dry_run" "$interactive"
-        return $?
-    fi
     
     local pids
     local docker_containers
@@ -2092,7 +1700,6 @@ show_help() {
     echo "  -d, --detailed        Show detailed process information"
     echo "      --docker          Include Docker container management"
     echo "      --json            Output results in JSON format"
-    echo "      --remote <host>   Execute commands on remote host via SSH"
     echo "  -n, --dry-run         Show what would be done without doing it"
     echo "  -i, --interactive     Interactive confirmation for each process"
     echo "  -v, --verbose         Verbose output with logging"
@@ -2118,10 +1725,6 @@ show_help() {
     echo "  $0 history --analytics        # Show port usage analytics"
     echo "  $0 --json list 3000           # List processes in JSON format"
     echo "  $0 --docker --json list 8080  # List processes and containers in JSON"
-    echo "  $0 --remote user@server list 3000  # List remote processes"
-    echo "  $0 --remote prod.example.com kill 8080 # Kill remote processes"
-    echo "  $0 --remote deploy@staging -f 9000    # Force kill on remote server"
-    echo "  $0 --remote --json admin@host list 3000 # Remote JSON output"
     echo "  $0 menu                       # Interactive menu mode"
 }
 
@@ -2185,16 +1788,6 @@ main() {
             --json)
                 JSON_OUTPUT=true
                 shift
-                ;;
-            --remote)
-                shift
-                if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
-                    REMOTE_HOST="$1"
-                    shift
-                else
-                    print_colored "$RED" "[!]" "--remote requires a host (user@host)"
-                    exit 1
-                fi
                 ;;
             -l|--list)
                 command="list"

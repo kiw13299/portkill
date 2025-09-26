@@ -43,3 +43,6 @@ build/
 rpmbuild/
 *.sha256
 checksums.txt
+COMPETITIVE_STRATEGY.md
+AUR_MAINTENANCE.md
+competitive_analysis.md

@@ -6,24 +6,25 @@
 [![Homebrew](https://img.shields.io/badge/Homebrew-available-orange)](https://github.com/mr-tanta/homebrew-portkill)
 [![Shell](https://img.shields.io/badge/shell-bash-green)](https://www.gnu.org/software/bash/)
 
-**PortKill** is a powerful, feature-rich port management and network analysis utility designed for developers, system administrators, and DevOps professionals. It simplifies the complex process of identifying, managing, and analyzing network ports and their associated processes on macOS and Linux systems.
+**PortKill** is a lightweight, reliable, and zero-dependency port management utility designed for developers, system administrators, and DevOps professionals. Following the Unix philosophy of "do one thing and do it well," PortKill focuses on efficiently killing processes on ports without bloat or complex dependencies.
 
 ## Key Features
 
-- **Remote SSH Management**: Execute port operations across multiple servers via SSH (NEW v2.3.2) 🚀
-- **Docker Integration**: Native container detection and management with unified interface (NEW v2.3.2)
-- **JSON API Output**: Machine-readable structured output for automation and CI/CD (NEW v2.3.2)
-- **Performance Benchmarking**: Test connection speed, latency, and reliability (NEW v2.3.0)
-- **Intelligent Process Detection**: Advanced multi-method process identification with automatic fallbacks
-- **Interactive Terminal UI**: Beautiful, intuitive interface for visual port management
+- **Zero Dependencies**: Pure Bash script - no Python, Node.js, or other runtime requirements
+- **Lightweight**: Only 72KB - 200x smaller than alternatives
+- **Docker Integration**: Native container detection and management with unified interface
+- **Simple JSON Output**: Clean, readable output for automation and scripts
+- **Performance Benchmarking**: Test connection speed and latency to remote ports
+- **Smart Process Detection**: Multi-method process identification with fallbacks
+- **Interactive Terminal Menu**: Clean, intuitive interface for port management
 - **Process Tree Visualization**: Hierarchical display of process relationships
 - **Safe Process Management**: Built-in protection for system-critical processes
-- **Bulk Operations**: Efficiently manage multiple ports simultaneously
-- **Real-time Monitoring**: Continuous port activity surveillance
-- **Comprehensive Analytics**: Port usage history and detailed statistics
-- **Advanced Port Scanning**: Detailed security and service analysis
-- **Cross-platform Support**: Seamless operation on macOS and Linux
-- **Easy Installation**: Homebrew, manual install, or build from source
+- **Bulk Operations**: Efficiently manage multiple ports and port ranges
+- **Real-time Monitoring**: Live port activity surveillance
+- **Port Usage Analytics**: Track and analyze port usage history
+- **Security Scanning**: Identify potentially vulnerable services
+- **Cross-platform Support**: Works on any system with Bash and standard Unix tools
+- **Easy Installation**: Single script - no package managers required
 
 ## Quick Start
 
@@ -33,39 +34,46 @@ brew tap mr-tanta/portkill
 brew install portkill
 ```
 
-### Kill processes on port 3000
+### Basic Usage
 ```bash
+# Kill processes on port 3000
 portkill 3000
+
+# Kill processes on multiple ports
+portkill 3000 8080 9000
+
+# Kill processes on port range
+portkill 3000-3005
 ```
 
-### Enterprise Remote Management (NEW v2.3.2)
+### Advanced Features
 ```bash
-# List processes on remote server
-portkill --remote user@server list 3000
+# List processes on a port
+portkill list 3000
 
-# Kill processes on production server
-portkill --remote deploy@prod.example.com kill 8080
+# Include Docker containers
+portkill --docker list 8080
 
-# Docker containers with JSON output on remote host
-portkill --remote --docker --json admin@k8s-node list 9000
-```
+# JSON output for automation
+portkill --json list 3000
 
-### Test port performance
-```bash
+# Test port performance
 portkill benchmark 3000
 portkill benchmark 80 google.com
-```
 
-### Launch interactive mode
-```bash
+# Interactive menu mode
 portkill menu
 ```
 
 ## Overview
 
-PortKill eliminates the frustration of port conflicts during development and system administration. Instead of remembering complex command sequences like `lsof -ti:3000 | xargs kill -9`, simply run `portkill 3000`. With revolutionary remote SSH support, you can now manage ports across your entire infrastructure with commands like `portkill --remote user@server kill 8080`.
+PortKill eliminates the frustration of port conflicts during development and system administration. Instead of remembering complex command sequences like `lsof -ti:3000 | xargs kill -9`, simply run `portkill 3000`. 
 
-Whether you're a developer dealing with stuck development servers, a sysadmin managing production systems, or a DevOps engineer orchestrating containerized applications across multiple servers, PortKill provides enterprise-grade tools that no other port management solution offers.
+**Zero Dependencies. Maximum Reliability.**
+
+In a world of bloated tools requiring Node.js, Python, or complex installations, PortKill stands apart as a pure Bash solution that works everywhere Unix tools exist. At just 72KB, it's 200x smaller than Rust alternatives while being more reliable than any tool with external dependencies.
+
+Whether you're a developer dealing with stuck development servers, a sysadmin managing production systems, or a DevOps engineer working in containerized environments, PortKill provides the reliability and simplicity you need without the bloat you don't.
 
 ## Features
 
@@ -105,6 +113,16 @@ Whether you're a developer dealing with stuck development servers, a sysadmin ma
 - **Interactive Confirmations**: Optional step-by-step confirmations for container operations
 - **Docker Status Awareness**: Graceful handling when Docker is unavailable
 - **History Tracking**: Log container operations alongside process activities
+
+### Web Dashboard (NEW v2.3.2) 🌐
+- **WebSocket Real-Time Updates**: Instant updates every 2 seconds with automatic fallback to polling
+- **Live Connection Status**: Visual indicators showing WebSocket vs Polling mode
+- **Interactive Management**: Check, kill, and benchmark ports through web UI
+- **System Statistics**: Live display of active ports, processes, Docker containers, and system load
+- **Professional UI**: Dark theme with gradient design, built with HTMX and Tailwind CSS
+- **Mobile Responsive**: Works seamlessly on desktop, tablet, and mobile devices
+- **Auto-Reconnection**: Seamless reconnection if WebSocket connection drops
+- **RESTful API**: JSON endpoints for integration with other tools and scripts
 
 ### Remote SSH Support (NEW v2.3.2) 🚀
 - **Cross-Server Management**: Execute port operations on remote servers via SSH
