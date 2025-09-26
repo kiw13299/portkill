@@ -7,7 +7,6 @@ URL:            https://github.com/mr-tanta/portkill
 Source0:        https://github.com/mr-tanta/portkill/archive/v%{version}.tar.gz
 
 BuildArch:      noarch
-BuildRequires:  bash
 
 Requires:       bash >= 4.0
 Requires:       coreutils
