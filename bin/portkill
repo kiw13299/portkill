@@ -37,6 +37,7 @@ AUTO_CONFIRM=false
 SHOW_HEADERS=true
 MONITORING_INTERVAL=2
 HISTORY_LIMIT=50
+DOCKER_MODE=false
 # LAST_SCAN_TIME=0 # Reserved for future use - disabled to avoid ShellCheck warning
 
 # Protected system processes
@@ -241,6 +242,72 @@ get_service_name() {
         27017) echo "MongoDB" ;;
         *) echo "" ;;
     esac
+}
+
+# Docker integration functions
+check_docker_available() {
+    command -v docker &> /dev/null && docker info &> /dev/null
+}
+
+# Get Docker container info for a port
+get_docker_container_info() {
+    local port="$1"
+    
+    if ! check_docker_available; then
+        return 1
+    fi
+    
+    # Get containers with port mappings
+    docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}" 2>/dev/null | \
+    grep ":$port->" | \
+    while IFS=$'\t' read -r container_id container_name ports; do
+        echo "$container_id|$container_name|$ports"
+    done
+}
+
+# Kill Docker container by port
+kill_docker_container_by_port() {
+    local port="$1"
+    local force="${2:-false}"
+    
+    if ! check_docker_available; then
+        print_colored "$YELLOW" "[!]" "Docker not available - skipping container management"
+        return 1
+    fi
+    
+    local containers
+    containers=$(get_docker_container_info "$port")
+    
+    if [[ -z "$containers" ]]; then
+        return 1
+    fi
+    
+    local killed_count=0
+    while IFS='|' read -r container_id container_name ports; do
+        if [[ -n "$container_id" ]]; then
+            print_colored "$BLUE" "[>]" "Found Docker container: $container_name ($container_id) on port $port"
+            
+            if [[ "$force" == "true" ]]; then
+                if docker kill "$container_id" 2>/dev/null; then
+                    print_colored "$RED" "[x]" "Force killed Docker container: $container_name"
+                    ((killed_count++))
+                else
+                    print_colored "$RED" "[!]" "Failed to force kill container: $container_name"
+                fi
+            else
+                if docker stop "$container_id" 2>/dev/null; then
+                    print_colored "$GREEN" "[✓]" "Stopped Docker container: $container_name"
+                    ((killed_count++))
+                else
+                    print_colored "$RED" "[!]" "Failed to stop container: $container_name"
+                fi
+            fi
+            
+            add_to_history "DOCKER_KILL" "Port: $port, Container: $container_name, ID: $container_id"
+        fi
+    done <<< "$containers"
+    
+    return $killed_count
 }
 
 # Find processes on port
@@ -518,60 +585,103 @@ list_processes() {
     local port="$1"
     local detailed="${2:-false}"
     local pids
+    local docker_containers
     
-    if ! pids=$(find_processes_on_port "$port"); then
-        print_colored "$YELLOW" "[i]" "No processes found on port $port"
+    # Check for regular processes
+    pids=$(find_processes_on_port "$port" 2>/dev/null || true)
+    
+    # Check for Docker containers if Docker mode is enabled
+    if [[ "$DOCKER_MODE" == "true" ]]; then
+        docker_containers=$(get_docker_container_info "$port" 2>/dev/null || true)
+    fi
+    
+    # If neither processes nor containers found
+    if [[ -z "$pids" && -z "$docker_containers" ]]; then
+        if [[ "$DOCKER_MODE" == "true" ]]; then
+            print_colored "$YELLOW" "[i]" "No processes or Docker containers found on port $port"
+        else
+            print_colored "$YELLOW" "[i]" "No processes found on port $port"
+        fi
         return 0
     fi
     
     local service_name; service_name=$(get_service_name "$port")
     if [[ -n "$service_name" ]]; then
-        print_colored "$BLUE" "[+]" "Port $port ($service_name) - Active Processes:"
+        print_colored "$BLUE" "[+]" "Port $port ($service_name) - Active Processes/Containers:"
     else
-        print_colored "$BLUE" "[+]" "Port $port - Active Processes:"
+        print_colored "$BLUE" "[+]" "Port $port - Active Processes/Containers:"
     fi
     echo
     
     local count=0
-    while read -r pid; do
-        if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
-            ((count++))
-            
-            if [[ "$detailed" == "true" ]]; then
-                local proc_info; proc_info=$(get_process_info "$pid" "true")
-                local cmdline; cmdline=$(get_process_cmdline "$pid")
+    
+    # List regular processes
+    if [[ -n "$pids" ]]; then
+        while read -r pid; do
+            if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
+                ((count++))
                 
-                echo -e "  ${BOLD}Process #$count${NC}"
-                echo -e "    PID: ${YELLOW}$pid${NC}"
-                echo -e "    Info: $proc_info"
-                echo -e "    Command: ${CYAN}$(echo "$cmdline" | cut -c1-80)${NC}"
-                
-                local comm; comm=$(echo "$proc_info" | awk '{print $NF}')
-                if is_protected_process "$comm"; then
-                    echo -e "    ${RED}[PROTECTED PROCESS]${NC}"
+                if [[ "$detailed" == "true" ]]; then
+                    local proc_info; proc_info=$(get_process_info "$pid" "true")
+                    local cmdline; cmdline=$(get_process_cmdline "$pid")
+                    
+                    echo -e "  ${BOLD}Process #$count${NC}"
+                    echo -e "    PID: ${YELLOW}$pid${NC}"
+                    echo -e "    Info: $proc_info"
+                    echo -e "    Command: ${CYAN}$(echo "$cmdline" | cut -c1-80)${NC}"
+                    
+                    local comm; comm=$(echo "$proc_info" | awk '{print $NF}')
+                    if is_protected_process "$comm"; then
+                        echo -e "    ${RED}[PROTECTED PROCESS]${NC}"
+                    fi
+                    echo
+                else
+                    local info; info=$(get_process_info "$pid")
+                    local user; user=$(echo "$info" | awk '{print $1}')
+                    local command; command=$(echo "$info" | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/ $//')
+                    
+                    local protection_status=""
+                    if is_protected_process "$command"; then
+                        protection_status="${RED}[PROTECTED]${NC}"
+                    fi
+                    
+                    printf "  ${YELLOW}%-8s${NC} ${CYAN}%-15s${NC} ${WHITE}%-30s${NC} %s\n" \
+                        "PID $pid" "$user" "$command" "$protection_status"
                 fi
-                echo
-            else
-                local info; info=$(get_process_info "$pid")
-                local user; user=$(echo "$info" | awk '{print $1}')
-                local command; command=$(echo "$info" | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/ $//')
-                
-                local protection_status=""
-                if is_protected_process "$command"; then
-                    protection_status="${RED}[PROTECTED]${NC}"
-                fi
-                
-                printf "  ${YELLOW}%-8s${NC} ${CYAN}%-15s${NC} ${WHITE}%-30s${NC} %s\n" \
-                    "PID $pid" "$user" "$command" "$protection_status"
             fi
-        fi
-    done <<< "$pids"
+        done <<< "$pids"
+    fi
+    
+    # List Docker containers
+    if [[ -n "$docker_containers" ]]; then
+        while IFS='|' read -r container_id container_name ports; do
+            if [[ -n "$container_id" ]]; then
+                ((count++))
+                
+                if [[ "$detailed" == "true" ]]; then
+                    echo -e "  ${BOLD}Container #$count${NC}"
+                    echo -e "    Container ID: ${YELLOW}${container_id:0:12}${NC}"
+                    echo -e "    Name: ${CYAN}$container_name${NC}"
+                    echo -e "    Ports: ${WHITE}$ports${NC}"
+                    echo -e "    Type: ${BLUE}[DOCKER CONTAINER]${NC}"
+                    echo
+                else
+                    printf "  ${YELLOW}%-8s${NC} ${CYAN}%-15s${NC} ${WHITE}%-30s${NC} %s\n" \
+                        "DOCK ${container_id:0:8}" "docker" "$container_name" "${BLUE}[DOCKER]${NC}"
+                fi
+            fi
+        done <<< "$docker_containers"
+    fi
     
     if [[ $count -eq 0 ]]; then
-        print_colored "$YELLOW" "[i]" "No valid processes found"
+        print_colored "$YELLOW" "[i]" "No valid processes or containers found"
     else
         echo
-        print_colored "$GREEN" "[i]" "Found $count process(es) on port $port"
+        if [[ "$DOCKER_MODE" == "true" ]]; then
+            print_colored "$GREEN" "[i]" "Found $count process(es)/container(s) on port $port"
+        else
+            print_colored "$GREEN" "[i]" "Found $count process(es) on port $port"
+        fi
     fi
 }
 
@@ -619,6 +729,7 @@ kill_processes() {
     local dry_run="${3:-false}"
     local interactive="${4:-false}"
     local pids
+    local docker_containers
     local signal_name="SIGTERM"
     local signal_num=15
     local killed_count=0
@@ -629,8 +740,21 @@ kill_processes() {
         signal_num=9
     fi
     
-    if ! pids=$(find_processes_on_port "$port"); then
-        print_colored "$YELLOW" "[i]" "No processes found on port $port"
+    # Check for regular processes
+    pids=$(find_processes_on_port "$port" 2>/dev/null || true)
+    
+    # Check for Docker containers if Docker mode is enabled
+    if [[ "$DOCKER_MODE" == "true" ]]; then
+        docker_containers=$(get_docker_container_info "$port" 2>/dev/null || true)
+    fi
+    
+    # If neither processes nor containers found
+    if [[ -z "$pids" && -z "$docker_containers" ]]; then
+        if [[ "$DOCKER_MODE" == "true" ]]; then
+            print_colored "$YELLOW" "[i]" "No processes or Docker containers found on port $port"
+        else
+            print_colored "$YELLOW" "[i]" "No processes found on port $port"
+        fi
         return 0
     fi
     
@@ -693,15 +817,71 @@ kill_processes() {
         fi
     done <<< "$pids"
     
+    # Handle Docker containers if Docker mode is enabled
+    if [[ "$DOCKER_MODE" == "true" && -n "$docker_containers" ]]; then
+        while IFS='|' read -r container_id container_name ports; do
+            if [[ -n "$container_id" ]]; then
+                if [[ "$interactive" == "true" && "$AUTO_CONFIRM" != "true" ]]; then
+                    echo -ne "${WHITE}Kill Docker container ${YELLOW}$container_name${WHITE} (${CYAN}$container_id${WHITE}) with ${RED}$([ "$force" == "true" ] && echo "FORCE KILL" || echo "STOP")${WHITE}? (y/N/q): ${NC}"
+                    read -r response
+                    case "$response" in
+                        [Yy]) ;;
+                        [Qq]) print_colored "$GRAY" "[i]" "Operation cancelled"; return 0 ;;
+                        *) print_colored "$GRAY" "[i]" "Skipped container $container_name"; continue ;;
+                    esac
+                fi
+                
+                if [[ "$dry_run" == "true" ]]; then
+                    print_colored "$BLUE" "[i]" "DRY RUN: Would $([ "$force" == "true" ] && echo "force kill" || echo "stop") Docker container $container_name ($container_id) on port $port"
+                    ((killed_count++))
+                else
+                    if [[ "$force" == "true" ]]; then
+                        if docker kill "$container_id" 2>/dev/null; then
+                            print_colored "$RED" "[x]" "Force killed Docker container: $container_name ($container_id)"
+                            ((killed_count++))
+                            add_to_history "DOCKER_KILL" "Port: $port, Container: $container_name, ID: $container_id, Action: FORCE_KILL"
+                            log_message "INFO" "Force killed Docker container $container_name ($container_id) on port $port"
+                        else
+                            print_colored "$RED" "[!]" "Failed to force kill Docker container: $container_name"
+                            ((failed_count++))
+                        fi
+                    else
+                        if docker stop "$container_id" 2>/dev/null; then
+                            print_colored "$GREEN" "[✓]" "Stopped Docker container: $container_name ($container_id)"
+                            ((killed_count++))
+                            add_to_history "DOCKER_KILL" "Port: $port, Container: $container_name, ID: $container_id, Action: STOP"
+                            log_message "INFO" "Stopped Docker container $container_name ($container_id) on port $port"
+                        else
+                            print_colored "$RED" "[!]" "Failed to stop Docker container: $container_name"
+                            ((failed_count++))
+                        fi
+                    fi
+                fi
+            fi
+        done <<< "$docker_containers"
+    fi
+    
     echo
     if [[ "$dry_run" == "true" ]]; then
-        print_colored "$BLUE" "[i]" "DRY RUN: Would process $killed_count process(es) on port $port"
+        local process_text="process(es)"
+        if [[ "$DOCKER_MODE" == "true" ]]; then
+            process_text="process(es) and container(s)"
+        fi
+        print_colored "$BLUE" "[i]" "DRY RUN: Would process $killed_count $process_text on port $port"
     else
         if [[ $killed_count -gt 0 ]]; then
-            print_colored "$GREEN" "[✓]" "Successfully processed $killed_count process(es) on port $port"
+            local process_text="process(es)"
+            if [[ "$DOCKER_MODE" == "true" ]]; then
+                process_text="process(es) and container(s)"
+            fi
+            print_colored "$GREEN" "[✓]" "Successfully processed $killed_count $process_text on port $port"
         fi
         if [[ $failed_count -gt 0 ]]; then
-            print_colored "$RED" "[!]" "Failed to process $failed_count process(es)"
+            local process_text="process(es)"
+            if [[ "$DOCKER_MODE" == "true" ]]; then
+                process_text="process(es) and container(s)"
+            fi
+            print_colored "$RED" "[!]" "Failed to process $failed_count $process_text"
         fi
     fi
 }
@@ -1420,6 +1600,7 @@ show_help() {
     echo "OPTIONS:"
     echo "  -f, --force           Use SIGKILL instead of SIGTERM"
     echo "  -d, --detailed        Show detailed process information"
+    echo "      --docker          Include Docker container management"
     echo "  -n, --dry-run         Show what would be done without doing it"
     echo "  -i, --interactive     Interactive confirmation for each process"
     echo "  -v, --verbose         Verbose output with logging"
@@ -1497,6 +1678,10 @@ main() {
                 ;;
             --detailed|-d)
                 DETAILED_MODE=true
+                shift
+                ;;
+            --docker)
+                DOCKER_MODE=true
                 shift
                 ;;
             -l|--list)
