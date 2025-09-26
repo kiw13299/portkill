@@ -38,6 +38,7 @@ SHOW_HEADERS=true
 MONITORING_INTERVAL=2
 HISTORY_LIMIT=50
 DOCKER_MODE=false
+JSON_OUTPUT=false
 # LAST_SCAN_TIME=0 # Reserved for future use - disabled to avoid ShellCheck warning
 
 # Protected system processes
@@ -167,6 +168,90 @@ show_section_header() {
     echo
     echo -e "${BLUE}--- $title ---${NC}"
     echo
+}
+
+# JSON output utility functions
+escape_json_string() {
+    local string="$1"
+    # Escape quotes, backslashes, and control characters for JSON
+    echo "$string" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\n/\\n/g; s/\r/\\r/g'
+}
+
+output_json() {
+    local json_content="$1"
+    if [[ "$JSON_OUTPUT" == "true" ]]; then
+        echo "$json_content"
+    fi
+}
+
+generate_process_json() {
+    local port="$1"
+    local pids="$2"
+    local docker_containers="$3"
+    local service_name
+    service_name=$(get_service_name "$port")
+    
+    local json="{"
+    json+='"port": '"$port"','
+    json+='"service": "'"$(escape_json_string "$service_name")"'",'
+    json+='"timestamp": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'",'
+    json+='"processes": ['
+    
+    local first_process=true
+    if [[ -n "$pids" ]]; then
+        while read -r pid; do
+            if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
+                if [[ "$first_process" == "false" ]]; then
+                    json+=','
+                fi
+                first_process=false
+                
+                local info
+                info=$(get_process_info "$pid")
+                local user
+                user=$(echo "$info" | awk '{print $1}')
+                local command
+                command=$(echo "$info" | awk '{for(i=2;i<=NF;i++) printf "%s ", $i; print ""}' | sed 's/ $//')
+                local cmdline
+                cmdline=$(get_process_cmdline "$pid")
+                
+                json+='{'
+                json+='"type": "process",'
+                json+='"pid": '"$pid"','
+                json+='"user": "'"$(escape_json_string "$user")"'",'
+                json+='"command": "'"$(escape_json_string "$command")"'",'
+                json+='"cmdline": "'"$(escape_json_string "$cmdline")"'"'
+                
+                if is_protected_process "$command"; then
+                    json+=',"protected": true'
+                fi
+                
+                json+='}'
+            fi
+        done <<< "$pids"
+    fi
+    
+    # Add Docker containers if available
+    if [[ -n "$docker_containers" ]]; then
+        while IFS='|' read -r container_id container_name ports; do
+            if [[ -n "$container_id" ]]; then
+                if [[ "$first_process" == "false" ]]; then
+                    json+=','
+                fi
+                first_process=false
+                
+                json+='{'
+                json+='"type": "container",'
+                json+='"container_id": "'"$(escape_json_string "$container_id")"'",'
+                json+='"name": "'"$(escape_json_string "$container_name")"'",'
+                json+='"ports": "'"$(escape_json_string "$ports")"'"'
+                json+='}'
+            fi
+        done <<< "$docker_containers"
+    fi
+    
+    json+=']}'
+    echo "$json"
 }
 
 # Port validation
@@ -597,26 +682,37 @@ list_processes() {
     
     # If neither processes nor containers found
     if [[ -z "$pids" && -z "$docker_containers" ]]; then
-        if [[ "$DOCKER_MODE" == "true" ]]; then
-            print_colored "$YELLOW" "[i]" "No processes or Docker containers found on port $port"
+        if [[ "$JSON_OUTPUT" == "true" ]]; then
+            local empty_json
+            empty_json=$(generate_process_json "$port" "" "")
+            output_json "$empty_json"
         else
-            print_colored "$YELLOW" "[i]" "No processes found on port $port"
+            if [[ "$DOCKER_MODE" == "true" ]]; then
+                print_colored "$YELLOW" "[i]" "No processes or Docker containers found on port $port"
+            else
+                print_colored "$YELLOW" "[i]" "No processes found on port $port"
+            fi
         fi
         return 0
     fi
     
-    local service_name; service_name=$(get_service_name "$port")
-    if [[ -n "$service_name" ]]; then
-        print_colored "$BLUE" "[+]" "Port $port ($service_name) - Active Processes/Containers:"
-    else
-        print_colored "$BLUE" "[+]" "Port $port - Active Processes/Containers:"
+    # Show header only in non-JSON mode
+    if [[ "$JSON_OUTPUT" != "true" ]]; then
+        local service_name; service_name=$(get_service_name "$port")
+        if [[ -n "$service_name" ]]; then
+            print_colored "$BLUE" "[+]" "Port $port ($service_name) - Active Processes/Containers:"
+        else
+            print_colored "$BLUE" "[+]" "Port $port - Active Processes/Containers:"
+        fi
+        echo
     fi
-    echo
     
     local count=0
     
-    # List regular processes
-    if [[ -n "$pids" ]]; then
+    # Display processes and containers only in non-JSON mode
+    if [[ "$JSON_OUTPUT" != "true" ]]; then
+        # List regular processes
+        if [[ -n "$pids" ]]; then
         while read -r pid; do
             if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
                 ((count++))
@@ -671,16 +767,45 @@ list_processes() {
                 fi
             fi
         done <<< "$docker_containers"
+        fi
     fi
     
-    if [[ $count -eq 0 ]]; then
-        print_colored "$YELLOW" "[i]" "No valid processes or containers found"
+    # Count processes and containers for JSON output
+    if [[ "$JSON_OUTPUT" == "true" ]]; then
+        # Count processes
+        if [[ -n "$pids" ]]; then
+            while read -r pid; do
+                if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
+                    ((count++))
+                fi
+            done <<< "$pids"
+        fi
+        
+        # Count Docker containers
+        if [[ -n "$docker_containers" ]]; then
+            while IFS='|' read -r container_id container_name ports; do
+                if [[ -n "$container_id" ]]; then
+                    ((count++))
+                fi
+            done <<< "$docker_containers"
+        fi
+    fi
+    
+    # Output results
+    if [[ "$JSON_OUTPUT" == "true" ]]; then
+        local process_json
+        process_json=$(generate_process_json "$port" "$pids" "$docker_containers")
+        output_json "$process_json"
     else
-        echo
-        if [[ "$DOCKER_MODE" == "true" ]]; then
-            print_colored "$GREEN" "[i]" "Found $count process(es)/container(s) on port $port"
+        if [[ $count -eq 0 ]]; then
+            print_colored "$YELLOW" "[i]" "No valid processes or containers found"
         else
-            print_colored "$GREEN" "[i]" "Found $count process(es) on port $port"
+            echo
+            if [[ "$DOCKER_MODE" == "true" ]]; then
+                print_colored "$GREEN" "[i]" "Found $count process(es)/container(s) on port $port"
+            else
+                print_colored "$GREEN" "[i]" "Found $count process(es) on port $port"
+            fi
         fi
     fi
 }
@@ -1601,6 +1726,7 @@ show_help() {
     echo "  -f, --force           Use SIGKILL instead of SIGTERM"
     echo "  -d, --detailed        Show detailed process information"
     echo "      --docker          Include Docker container management"
+    echo "      --json            Output results in JSON format"
     echo "  -n, --dry-run         Show what would be done without doing it"
     echo "  -i, --interactive     Interactive confirmation for each process"
     echo "  -v, --verbose         Verbose output with logging"
@@ -1624,6 +1750,8 @@ show_help() {
     echo "  $0 benchmark 80 google.com    # Test remote port performance"
     echo "  $0 history                    # View port usage history"
     echo "  $0 history --analytics        # Show port usage analytics"
+    echo "  $0 --json list 3000           # List processes in JSON format"
+    echo "  $0 --docker --json list 8080  # List processes and containers in JSON"
     echo "  $0 menu                       # Interactive menu mode"
 }
 
@@ -1682,6 +1810,10 @@ main() {
                 ;;
             --docker)
                 DOCKER_MODE=true
+                shift
+                ;;
+            --json)
+                JSON_OUTPUT=true
                 shift
                 ;;
             -l|--list)
